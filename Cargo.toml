@@ -1,7 +1,6 @@
+# the project is one workspace, so all crates share one lock file and one build folder.
 [workspace]
-resolver = "2"
-members = [
-    "crates/engine",
-    "crates/store",
-    "crates/server",
-]
+# every folder inside crates is a member of the workspace.
+members = ["crates/*"]
+# dependency resolver version used by the 2024 edition.
+resolver = "3"
