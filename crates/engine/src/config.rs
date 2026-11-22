@@ -37,6 +37,16 @@ pub struct Config {
     pub travel_min_km: f64,
     // weight added when the speed between two cities is not possible.
     pub travel_weight: u32,
+    // failed logins in the last hour that count as a takeover signal.
+    pub takeover_failed_logins: u32,
+    // seconds after a password change during which the change counts as a signal.
+    pub takeover_password_window: i64,
+    // signals that must fire together before the takeover rule adds weight.
+    pub takeover_min_signals: u32,
+    // weight added when the minimum number of signals fire together.
+    pub takeover_weight: u32,
+    // extra weight for every signal above the minimum.
+    pub takeover_per_extra: u32,
 }
 
 // starting values, they are tuned later with the threshold sweep on the test data.
@@ -79,6 +89,16 @@ impl Default for Config {
             travel_min_km: 100.0,
             // impossible travel alone sends the transaction to review.
             travel_weight: 60,
+            // 3 failed logins in an hour is a signal.
+            takeover_failed_logins: 3,
+            // a password change counts for one day.
+            takeover_password_window: 86_400,
+            // two signals together are needed.
+            takeover_min_signals: 2,
+            // two signals together add 30.
+            takeover_weight: 30,
+            // every further signal adds 15, so all four reach 60.
+            takeover_per_extra: 15,
         }
     }
 }

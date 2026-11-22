@@ -22,6 +22,27 @@ pub struct TransactionEvent {
     pub city: Option<String>,
 }
 
+// the kinds of account activity that are not payments.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AccountEventKind {
+    // a wrong password was entered.
+    FailedLogin,
+    // the password of the account was changed.
+    PasswordChanged,
+}
+
+// one piece of account activity as sent by the payment system.
+#[derive(Debug, Deserialize)]
+pub struct AccountEvent {
+    // id of the user the activity belongs to.
+    pub user_id: String,
+    // time of the activity in unix seconds.
+    pub timestamp: i64,
+    // what happened.
+    pub kind: AccountEventKind,
+}
+
 // the three possible results of a decision, written in lowercase in JSON.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "lowercase")]

@@ -14,5 +14,5 @@ mod state;
 // make these names available to other crates as engine::Name.
 pub use config::Config;
 pub use engine::Engine;
-pub use event::{Decision, Outcome, TransactionEvent};
+pub use event::{AccountEvent, AccountEventKind, Decision, Outcome, TransactionEvent};
 pub use state::UserState;
