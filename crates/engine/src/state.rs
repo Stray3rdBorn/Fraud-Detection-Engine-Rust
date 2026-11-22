@@ -10,6 +10,8 @@ const SLOTS: usize = 12;
 const SLOT_SECONDS: i64 = 300;
 // most devices remembered per user, the oldest is forgotten when the list is full.
 const MAX_DEVICES: usize = 5;
+// most accounts remembered per device or IP, the oldest is forgotten when the list is full.
+const LINK_CAP: usize = 50;
 
 // counts events per 5 minute slot, a slot starts again when time reaches it a second time.
 #[derive(Debug, Clone, Default)]
@@ -164,6 +166,8 @@ pub struct UserState {
     pub failed_logins: Velocity,
     // time of the last password change, empty until one happens.
     pub password_changed_at: Option<i64>,
+        // time until which this account is blocked, empty when it is not.
+    pub blocked_until: Option<i64>,
 }
 
 impl UserState {
@@ -186,6 +190,13 @@ impl UserState {
             });
         }
     }
+
+        // true when the account is on the blocklist at the given time.
+    pub fn is_blocked(&self, now: i64) -> bool {
+        // a block counts until its end time.
+        self.blocked_until.is_some_and(|until| until > now)
+    }
+
     // adds one piece of account activity to the remembered state.
     pub fn record_account(&mut self, event: &AccountEvent) {
         // each kind of activity updates its own field.
@@ -195,6 +206,104 @@ impl UserState {
             // remember when the password changed.
             AccountEventKind::PasswordChanged => self.password_changed_at = Some(event.timestamp),
         }
+    }
+}
+
+// what is remembered about one device or one IP, shared by all accounts that use it.
+#[derive(Debug, Clone, Default)]
+pub struct EntityState {
+    // hashed ids of the accounts seen here with the time each was last seen, capped in size.
+    accounts: Vec<(u64, i64)>,
+    // time until which this device or IP is blocked, empty when it is not.
+    pub blocked_until: Option<i64>,
+    // last time an account that was blocked used this device or IP.
+    pub blocked_account_at: Option<i64>,
+}
+
+impl EntityState {
+    // true when this device or IP is on the blocklist at the given time.
+    pub fn is_blocked(&self, now: i64) -> bool {
+        // a block counts until its end time.
+        self.blocked_until.is_some_and(|until| until > now)
+    }
+
+    // true when a blocked account used this device or IP inside the window.
+    pub fn has_blocked_account(&self, now: i64, window: i64) -> bool {
+        // the sighting must be newer than the start of the window.
+        self.blocked_account_at
+            .is_some_and(|seen| seen > now.saturating_sub(window))
+    }
+
+    // number of different accounts seen inside the window, the given account is counted once.
+    pub fn accounts_with(&self, user: u64, now: i64, window: i64) -> u32 {
+        // accounts seen after this time are inside the window.
+        let start = now.saturating_sub(window);
+        // count of accounts inside the window.
+        let mut count = 0;
+        // whether the given account is one of them.
+        let mut has_user = false;
+        // go through everything remembered here.
+        for &(account, seen) in &self.accounts {
+            // old sightings are ignored.
+            if seen > start {
+                // one more account.
+                count += 1;
+                // remember if it is the given account.
+                has_user |= account == user;
+            }
+        }
+        // the given account counts even when it has not been seen here yet.
+        count + u32::from(!has_user)
+    }
+
+    // records that an account used this device or IP.
+    pub fn record(&mut self, user: u64, now: i64, user_blocked: bool) {
+        // an account that is already known only gets a newer time, an older time never replaces a newer one.
+        if let Some(entry) = self.accounts.iter_mut().find(|(account, _)| *account == user) {
+            // keep the later time.
+            entry.1 = entry.1.max(now);
+        } else {
+            // a full list makes room by dropping the account seen longest ago.
+            if self.accounts.len() == LINK_CAP {
+                // position of the oldest sighting.
+                if let Some(oldest) = self
+                    .accounts
+                    .iter()
+                    .enumerate()
+                    .min_by_key(|(_, (_, seen))| *seen)
+                    .map(|(index, _)| index)
+                {
+                    // remove it, the order of the list does not matter.
+                    self.accounts.swap_remove(oldest);
+                }
+            }
+            // add the new account.
+            self.accounts.push((user, now));
+        }
+        // remember when a blocked account was last here.
+        if user_blocked {
+            // store the time.
+            self.blocked_account_at = Some(now);
+        }
+    }
+}
+
+// the device and the IP of one transaction.
+#[derive(Debug, Clone, Default)]
+pub struct Entities {
+    // what is remembered about the device.
+    pub device: EntityState,
+    // what is remembered about the IP address.
+    pub ip: EntityState,
+}
+
+impl Entities {
+    // records the account on both the device and the IP.
+    pub fn record(&mut self, user: u64, now: i64, user_blocked: bool) {
+        // update the device.
+        self.device.record(user, now, user_blocked);
+        // update the IP.
+        self.ip.record(user, now, user_blocked);
     }
 }
 
@@ -305,5 +414,56 @@ mod tests {
         assert_eq!(state.password_changed_at, Some(200));
         // account activity is not a transaction, so the first seen time stays empty.
         assert_eq!(state.first_seen, None);
+    }
+        // distinct accounts are counted inside the window, and the given account is never counted twice.
+    #[test]
+    fn entity_counts_distinct_accounts_in_the_window() {
+        // start with an empty entity.
+        let mut entity = EntityState::default();
+        // account 1 at time 100, account 2 at time 200, account 1 again at time 300.
+        entity.record(1, 100, false);
+        entity.record(2, 200, false);
+        entity.record(1, 300, false);
+        // two accounts are known and account 1 is one of them.
+        assert_eq!(entity.accounts_with(1, 300, 1_000), 2);
+        // a new account 3 would make three.
+        assert_eq!(entity.accounts_with(3, 300, 1_000), 3);
+        // with a short window only the sighting at time 300 is inside, so account 3 would make two.
+        assert_eq!(entity.accounts_with(3, 300, 50), 2);
+    }
+
+    // the list never grows past the cap and the oldest account is dropped first.
+    #[test]
+    fn entity_list_is_capped_and_forgets_the_oldest() {
+        // start with an empty entity.
+        let mut entity = EntityState::default();
+        // record 60 accounts, each one second after the previous.
+        for id in 0..60u64 {
+            // add one account.
+            entity.record(id, id as i64, false);
+        }
+        // only 50 are kept.
+        assert_eq!(entity.accounts.len(), 50);
+        // the first account is gone.
+        assert!(!entity.accounts.iter().any(|(account, _)| *account == 0));
+    }
+
+    // a blocked account leaves a mark and the blocklist expires.
+    #[test]
+    fn entity_tracks_blocked_accounts_and_expiry() {
+        // start with an empty entity.
+        let mut entity = EntityState::default();
+        // a blocked account uses the entity at time 100.
+        entity.record(1, 100, true);
+        // the mark is visible inside the window.
+        assert!(entity.has_blocked_account(200, 1_000));
+        // the mark is gone once the window has passed.
+        assert!(!entity.has_blocked_account(2_000, 1_000));
+        // a block that ends at 500 holds before 500 and not at 500.
+        entity.blocked_until = Some(500);
+        // still blocked.
+        assert!(entity.is_blocked(499));
+        // expired.
+        assert!(!entity.is_blocked(500));
     }
 }
