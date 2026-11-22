@@ -3,7 +3,8 @@ use crate::{
     config::Config,
     event::{Decision, Outcome, TransactionEvent},
     rules::{
-        AccountAgeRule, AmountAnomalyRule, ImpossibleTravelRule, NewDeviceRule, Rule, VelocityRule,
+        AccountAgeRule, AccountTakeoverRule, AmountAnomalyRule, ImpossibleTravelRule,
+        NewDeviceRule, Rule, VelocityRule,
     },
     state::UserState,
 };
@@ -26,6 +27,7 @@ impl Engine {
             Box::new(AccountAgeRule),
             Box::new(NewDeviceRule),
             Box::new(ImpossibleTravelRule),
+            Box::new(AccountTakeoverRule),
         ];
         // keep the settings and the rules together.
         Engine { config, rules }
@@ -79,7 +81,7 @@ impl Engine {
 mod tests {
     // bring the engine and helpers into the tests.
     use super::*;
-    use crate::event::sample_event;
+    use crate::event::{AccountEvent, AccountEventKind, sample_event};
 
     // an honest user with history gets allowed.
     #[test]
@@ -125,6 +127,39 @@ mod tests {
         assert!(matches!(decision.outcome, Outcome::Block));
         // three rules fired, so three reasons.
         assert_eq!(decision.reasons.len(), 3);
+    }
+
+    // failed logins, a new device and a large amount together are blocked.
+    #[test]
+    fn takeover_sequence_is_blocked() {
+        // default engine.
+        let engine = Engine::new(Config::default());
+        // a user with six normal transactions of 20 on device d1.
+        let mut state = UserState::default();
+        // record each one.
+        for i in 0..6 {
+            // add one transaction.
+            state.record(&sample_event(i * 10_000, 20.0));
+        }
+        // three failed logins just before the payment.
+        for _ in 0..3 {
+            // add one failed login.
+            state.record_account(&AccountEvent {
+                user_id: "u1".to_string(),
+                timestamp: 99_990,
+                kind: AccountEventKind::FailedLogin,
+            });
+        }
+        // a large payment from a new device.
+        let mut event = sample_event(100_000, 500.0);
+        // set the new device.
+        event.device_id = "d2".to_string();
+        // decide it.
+        let (decision, _) = engine.evaluate(&event, &state);
+        // amount 40 plus new device 40 plus takeover 45.
+        assert_eq!(decision.score, 125);
+        // the outcome is block.
+        assert!(matches!(decision.outcome, Outcome::Block));
     }
 
     // the returned state includes the new transaction.

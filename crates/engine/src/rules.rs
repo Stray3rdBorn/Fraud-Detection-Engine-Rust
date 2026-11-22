@@ -97,19 +97,31 @@ impl Rule for AccountAgeRule {
     }
 }
 
+// true when the user has used other devices before but not this one.
+fn is_new_device(event: &TransactionEvent, state: &UserState) -> bool {
+    // a user with no known device has nothing to compare against.
+    !state.devices.is_empty() && !state.devices.contains(&event.device_id)
+}
+
+// true when the user has a baseline and this amount is far above it.
+fn is_large_amount(event: &TransactionEvent, state: &UserState, config: &Config) -> bool {
+    // the baseline needs enough history, and the amount must reach the starting distance.
+    state.amounts.count() >= config.amount_min_history
+        && state.amounts.z(event.amount, config.amount_min_spread) >= config.amount_z_start
+}
+
 // flags a device the user has not used before.
 pub struct NewDeviceRule;
 
 impl Rule for NewDeviceRule {
     fn check(&self, event: &TransactionEvent, state: &UserState, config: &Config) -> Option<Hit> {
-        // a user with no known device has nothing to compare against, and a known device is fine.
-        if state.devices.is_empty() || state.devices.contains(&event.device_id) {
+        // a known device or a first device is fine.
+        if !is_new_device(event, state) {
             // normal activity.
             return None;
         }
-        // the amount is large when the user has a baseline and the amount is far above it.
-        let large = state.amounts.count() >= config.amount_min_history
-            && state.amounts.z(event.amount, config.amount_min_spread) >= config.amount_z_start;
+        // a large amount on a new device is worse.
+        let large = is_large_amount(event, state, config);
         // a large amount adds a bonus on top of the base weight.
         let weight = config.new_device_weight
             + if large {
@@ -164,12 +176,58 @@ impl Rule for ImpossibleTravelRule {
     }
 }
 
+// flags several weak account signals that fire together.
+pub struct AccountTakeoverRule;
+
+impl Rule for AccountTakeoverRule {
+    fn check(&self, event: &TransactionEvent, state: &UserState, config: &Config) -> Option<Hit> {
+        // each signal is a name with a yes or no answer.
+        let signals = [
+            (
+                "failed logins",
+                state.failed_logins.count(event.timestamp) >= config.takeover_failed_logins,
+            ),
+            (
+                "password change",
+                // the change must be in the past and inside the window.
+                state.password_changed_at.is_some_and(|changed| {
+                    (0..config.takeover_password_window)
+                        .contains(&event.timestamp.saturating_sub(changed))
+                }),
+            ),
+            ("new device", is_new_device(event, state)),
+            ("large amount", is_large_amount(event, state, config)),
+        ];
+        // keep the names of the signals that answered yes.
+        let fired: Vec<&str> = signals
+            .iter()
+            .filter(|(_, on)| *on)
+            .map(|(name, _)| *name)
+            .collect();
+        // number of signals that fired.
+        let count = fired.len() as u32;
+        // too few signals together is not a takeover.
+        if count < config.takeover_min_signals {
+            // normal activity.
+            return None;
+        }
+        // the base weight covers the minimum, every further signal adds a little more.
+        let weight = config.takeover_weight
+            + (count - config.takeover_min_signals) * config.takeover_per_extra;
+        // report the hit with the fired signals as the reason.
+        Some(Hit {
+            weight,
+            reason: format!("account takeover signals: {}", fired.join(", ")),
+        })
+    }
+}
+
 // tests for the rules.
 #[cfg(test)]
 mod tests {
     // bring the rules and helpers into the tests.
     use super::*;
-    use crate::event::sample_event;
+    use crate::event::{AccountEvent, AccountEventKind, sample_event};
 
     // builds a state that has seen the given amounts, all at time zero.
     fn state_with(amounts: &[f64]) -> UserState {
@@ -235,6 +293,79 @@ mod tests {
                 .check(&sample_event(0, 25.0), &state, &config)
                 .is_none()
         );
+    }
+
+    // builds one piece of account activity for tests.
+    fn account_event(kind: AccountEventKind, timestamp: i64) -> AccountEvent {
+        // the user id is a fixed placeholder.
+        AccountEvent {
+            user_id: "u1".to_string(),
+            timestamp,
+            kind,
+        }
+    }
+
+    // signals count only when at least two fire together, and each extra one adds weight.
+    #[test]
+    fn takeover_rule_needs_two_signals_together() {
+        // default settings.
+        let config = Config::default();
+        // a user who always spends 20 from device d1.
+        let mut state = state_with(&[20.0; 6]);
+        // three failed logins shortly before the payment.
+        for _ in 0..3 {
+            // add one failed login.
+            state.record_account(&account_event(AccountEventKind::FailedLogin, 5));
+        }
+        // a normal payment on the known device has only the failed logins signal.
+        let mut event = sample_event(10, 25.0);
+        // one signal alone gives nothing.
+        assert!(AccountTakeoverRule.check(&event, &state, &config).is_none());
+        // a new device adds a second signal.
+        event.device_id = "d2".to_string();
+        // two signals give the base weight.
+        assert_eq!(
+            AccountTakeoverRule
+                .check(&event, &state, &config)
+                .unwrap()
+                .weight,
+            30
+        );
+        // a large amount adds a third signal.
+        event.amount = 500.0;
+        // the hit now has one extra step and names the large amount.
+        let hit = AccountTakeoverRule.check(&event, &state, &config).unwrap();
+        // 30 plus one extra step of 15.
+        assert_eq!(hit.weight, 45);
+        // the reason lists the fired signals.
+        assert!(hit.reason.contains("large amount"));
+    }
+
+    // a password change counts for one day and then stops counting.
+    #[test]
+    fn takeover_rule_forgets_old_password_changes() {
+        // default settings.
+        let config = Config::default();
+        // a user with history and a password change at time 1000.
+        let mut state = state_with(&[20.0; 6]);
+        // record the change.
+        state.record_account(&account_event(AccountEventKind::PasswordChanged, 1_000));
+        // a payment from a new device shortly after.
+        let mut event = sample_event(2_000, 25.0);
+        // set the new device.
+        event.device_id = "d2".to_string();
+        // password change plus new device are two signals.
+        assert_eq!(
+            AccountTakeoverRule
+                .check(&event, &state, &config)
+                .unwrap()
+                .weight,
+            30
+        );
+        // a full day after the change the signal is gone, so only the new device remains.
+        event.timestamp = 1_000 + 86_400;
+        // one signal gives nothing.
+        assert!(AccountTakeoverRule.check(&event, &state, &config).is_none());
     }
 
     // an unknown device fires, a larger amount raises the weight, known and first devices do not fire.
