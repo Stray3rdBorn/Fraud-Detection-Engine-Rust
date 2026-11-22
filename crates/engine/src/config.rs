@@ -1,0 +1,64 @@
+// all weights and thresholds in one place, so tuning never touches the rules.
+#[derive(Debug, Clone)]
+pub struct Config {
+    // a score at or above this sends the transaction to review.
+    pub review_threshold: u32,
+    // a score at or above this blocks the transaction.
+    pub block_threshold: u32,
+    // transactions in the last hour that cost no weight.
+    pub velocity_free: u32,
+    // weight added for every transaction above the free amount.
+    pub velocity_per_extra: u32,
+    // highest weight the velocity rule can add.
+    pub velocity_max_weight: u32,
+    // earlier transactions a user needs before the amount rule trusts the average.
+    pub amount_min_history: u64,
+    // small weight for users who do not have enough history yet.
+    pub amount_cold_weight: u32,
+    // how many spreads above the average an amount must be before it counts.
+    pub amount_z_start: f64,
+    // weight added for every spread above the starting point.
+    pub amount_per_z: f64,
+    // highest weight the amount rule can add.
+    pub amount_max_weight: u32,
+    // smallest spread allowed, so identical past amounts do not give huge scores.
+    pub amount_min_spread: f64,
+    // accounts younger than this many seconds count as new.
+    pub account_age_window: i64,
+    // highest weight the account age rule can add, reached at an age of zero.
+    pub account_age_max_weight: u32,
+}
+
+// starting values, they are tuned later with the threshold sweep on the test data.
+impl Default for Config {
+    fn default() -> Self {
+        Config {
+            // a score of 40 sends the transaction to review.
+            review_threshold: 40,
+            // a score of 80 blocks the transaction.
+            block_threshold: 80,
+            // up to 5 transactions in an hour are normal.
+            velocity_free: 5,
+            // every transaction above 5 adds 4.
+            velocity_per_extra: 4,
+            // velocity alone never adds more than 40.
+            velocity_max_weight: 40,
+            // 5 earlier transactions are needed for a baseline.
+            amount_min_history: 5,
+            // users without a baseline get a small caution of 10.
+            amount_cold_weight: 10,
+            // an amount 3 spreads above the average starts to count.
+            amount_z_start: 3.0,
+            // each extra spread adds 10.
+            amount_per_z: 10.0,
+            // the amount rule never adds more than 40.
+            amount_max_weight: 40,
+            // the spread never counts as smaller than 5 currency units.
+            amount_min_spread: 5.0,
+            // accounts younger than one hour count as new.
+            account_age_window: 3600,
+            // a brand new account adds 40.
+            account_age_max_weight: 40,
+        }
+    }
+}
