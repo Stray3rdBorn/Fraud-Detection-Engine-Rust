@@ -53,7 +53,7 @@ All seven are possible once the data is merged.
 - **What it does:** Divides the distance between the last and current location by the time between them, and flags speeds that are not possible.
 - **What it is for:** One card used in two far apart places.
 - **Data:** Dataset 2 city and timestamp.
-- **Tradeoff:** Cities are US only, and I need coordinates for them. Dataset 1 country from IP is unreliable because 21,966 rows cannot be mapped.
+- **Tradeoff:** Cities are US and BD only, and I need coordinates for them. Dataset 1 country from IP is unreliable because 21,966 rows cannot be mapped.
 - **My fix:** I build a city to coordinates table from the cities in dataset 2 and use that, not the IP country. I inject 500 pairs of transactions in two distant cities within too short a time.
 
 ### 4. New device risk
