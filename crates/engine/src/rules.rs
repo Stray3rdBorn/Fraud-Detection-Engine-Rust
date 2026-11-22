@@ -1,5 +1,5 @@
 // settings, event and state types the rules read from.
-use crate::{config::Config, event::TransactionEvent, state::UserState};
+use crate::{config::Config, event::TransactionEvent, geo, state::UserState};
 
 // what a rule reports when it fires.
 pub struct Hit {
@@ -52,10 +52,9 @@ impl Rule for AmountAnomalyRule {
                 reason: "amount: not enough history for this user".to_string(),
             });
         }
-        // the spread never counts as smaller than the floor, which avoids divisions by tiny numbers.
-        let spread = state.amounts.std_dev().max(config.amount_min_spread);
+       
         // how many spreads this amount sits above the average.
-        let z = (event.amount - state.amounts.mean()) / spread;
+        let z = state.amounts.z(event.amount, config.amount_min_spread);
         // below the starting point the amount is normal.
         if z < config.amount_z_start {
             // normal amount.
@@ -94,6 +93,73 @@ impl Rule for AccountAgeRule {
         Some(Hit {
             weight,
             reason: format!("account age: {age} seconds old"),
+        })
+    }
+}
+
+// flags a device the user has not used before.
+pub struct NewDeviceRule;
+
+impl Rule for NewDeviceRule {
+    fn check(&self, event: &TransactionEvent, state: &UserState, config: &Config) -> Option<Hit> {
+        // a user with no known device has nothing to compare against, and a known device is fine.
+        if state.devices.is_empty() || state.devices.contains(&event.device_id) {
+            // normal activity.
+            return None;
+        }
+        // the amount is large when the user has a baseline and the amount is far above it.
+        let large = state.amounts.count() >= config.amount_min_history
+            && state.amounts.z(event.amount, config.amount_min_spread) >= config.amount_z_start;
+        // a large amount adds a bonus on top of the base weight.
+        let weight = config.new_device_weight
+            + if large {
+                config.new_device_large_bonus
+            } else {
+                0
+            };
+        // the reason says whether the amount was large.
+        let reason = if large {
+            "new device used with a large amount"
+        } else {
+            "new device"
+        };
+        // report the hit.
+        Some(Hit {
+            weight,
+            reason: reason.to_string(),
+        })
+    }
+}
+
+// flags two cities that are too far apart for the time between the transactions.
+pub struct ImpossibleTravelRule;
+
+impl Rule for ImpossibleTravelRule {
+    fn check(&self, event: &TransactionEvent, state: &UserState, config: &Config) -> Option<Hit> {
+        // both the last position and the current city must be known, otherwise nothing can be compared.
+        let last = state.last_place?;
+        // position of the current city.
+        let pos = event.city.as_deref().and_then(geo::lookup)?;
+        // distance between the two positions.
+        let km = geo::distance_km(last.pos, pos);
+        // short moves are ignored.
+        if km < config.travel_min_km {
+            // normal activity.
+            return None;
+        }
+        // seconds since the last position, at least one so the division below is safe.
+        let elapsed = (event.timestamp - last.time).max(1);
+        // speed in kilometers per hour.
+        let speed = km * 3600.0 / elapsed as f64;
+        // a believable speed does not fire.
+        if speed <= config.travel_max_kmh {
+            // normal activity.
+            return None;
+        }
+        // report the hit with the distance and the time as the reason.
+        Some(Hit {
+            weight: config.travel_weight,
+            reason: format!("impossible travel: {km:.0} km in {elapsed} seconds"),
         })
     }
 }
@@ -165,6 +231,65 @@ mod tests {
         assert!(AmountAnomalyRule
             .check(&sample_event(0, 25.0), &state, &config)
             .is_none());
+    }
+
+        // an unknown device fires, a larger amount raises the weight, known and first devices do not fire.
+    #[test]
+    fn new_device_rule_scores_unknown_devices() {
+        // default settings.
+        let config = Config::default();
+        // a user who always spends 20 from device d1.
+        let state = state_with(&[20.0; 6]);
+        // the same user on a device not seen before with a normal amount.
+        let mut event = sample_event(0, 25.0);
+        // set the new device.
+        event.device_id = "d2".to_string();
+        // the base weight applies.
+        assert_eq!(NewDeviceRule.check(&event, &state, &config).unwrap().weight, 20);
+        // a large amount on the new device adds the bonus.
+        event.amount = 500.0;
+        // base plus bonus.
+        assert_eq!(NewDeviceRule.check(&event, &state, &config).unwrap().weight, 40);
+        // the known device does not fire.
+        assert!(NewDeviceRule.check(&sample_event(0, 25.0), &state, &config).is_none());
+        // a user with no devices yet does not fire.
+        assert!(NewDeviceRule.check(&event, &UserState::default(), &config).is_none());
+    }
+
+    // a far city in one hour fires, the same trip over a day does not, unknown cities are ignored.
+    #[test]
+    fn impossible_travel_rule_checks_speed_between_cities() {
+        // default settings.
+        let config = Config::default();
+        // a transaction in New York at time zero.
+        let mut first = sample_event(0, 10.0);
+        // set the city.
+        first.city = Some("New York".to_string());
+        // remember it.
+        let mut state = UserState::default();
+        // record the first transaction.
+        state.record(&first);
+        // Los Angeles one hour later.
+        let mut next = sample_event(3_600, 10.0);
+        // set the city.
+        next.city = Some("Los Angeles".to_string());
+        // about 3936 km in one hour is not possible.
+        assert_eq!(
+            ImpossibleTravelRule.check(&next, &state, &config).unwrap().weight,
+            60
+        );
+        // the same trip a day later is possible.
+        next.timestamp = 86_400;
+        // no hit.
+        assert!(ImpossibleTravelRule.check(&next, &state, &config).is_none());
+        // a city outside the table is ignored.
+        next.city = Some("Nowhere".to_string());
+        // no hit.
+        assert!(ImpossibleTravelRule.check(&next, &state, &config).is_none());
+        // the same city is a zero distance.
+        next.city = Some("New York".to_string());
+        // no hit.
+        assert!(ImpossibleTravelRule.check(&next, &state, &config).is_none());
     }
 
     // a fresh signup scores high, an old or unknown account scores nothing.

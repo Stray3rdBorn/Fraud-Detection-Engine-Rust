@@ -2,7 +2,9 @@
 use crate::{
     config::Config,
     event::{Decision, Outcome, TransactionEvent},
-    rules::{AccountAgeRule, AmountAnomalyRule, Rule, VelocityRule},
+        rules::{
+        AccountAgeRule, AmountAnomalyRule, ImpossibleTravelRule, NewDeviceRule, Rule, VelocityRule,
+    },
     state::UserState,
 };
 
@@ -22,6 +24,8 @@ impl Engine {
             Box::new(VelocityRule),
             Box::new(AmountAnomalyRule),
             Box::new(AccountAgeRule),
+            Box::new(NewDeviceRule),
+            Box::new(ImpossibleTravelRule),
         ];
         // keep the settings and the rules together.
         Engine { config, rules }
