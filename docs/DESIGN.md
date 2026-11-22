@@ -79,16 +79,16 @@ Not chosen: `actix-web`, because of its steeper learning curve. gRPC, because it
 
 ## 5. Rules
 
-| Rule              | Signal                                                                   | Notes                                                             |
-| ----------------- | ------------------------------------------------------------------------ | ----------------------------------------------------------------- |
-| Velocity          | Transactions per user, device and IP in a short window                   | 12 buckets of 5 minutes, summed when read                         |
-| Amount anomaly    | Amount against the user's running average and spread                     | Z score, default caution for users with no history                |
-| Impossible travel | Distance between the last and current city divided by the time           | Needs a city to coordinates table                                 |
-| New device        | Device not in the user's known set, with a larger weight for big amounts | Known set is capped in size                                       |
-| Blocklist         | Device, IP or account on the blocklist                                   | Entries from verdicts expire                                      |
-| Account takeover  | Failed logins, recent password change, new device, large amount          | A bonus applies when two or more fire together                    |
-| Linked accounts   | Distinct accounts per device (strong) and per IP (weak) over 7 days      | Cap of 50 accounts, extra weight when linked to a blocked account |
-| Account age       | Time since signup, or since first seen when there is no signup time      | Very new accounts add weight                                      |
+| Rule              | Signal                                                                   | Notes                                                                             |
+| ----------------- | ------------------------------------------------------------------------ | --------------------------------------------------------------------------------- | --- |
+| Velocity          | Transactions per user, device and IP in a short window                   | 12 buckets of 5 minutes, summed when read                                         |
+| Amount anomaly    | Amount against the user's running average and spread                     | Z score, default caution for users with no history                                |
+| Impossible travel | Distance between the last and current city divided by the time           | Needs a city to coordinates table, US cities from dataset 2 and Bangladesh cities |     |
+| New device        | Device not in the user's known set, with a larger weight for big amounts | Known set is capped in size                                                       |
+| Blocklist         | Device, IP or account on the blocklist                                   | Entries from verdicts expire                                                      |
+| Account takeover  | Failed logins, recent password change, new device, large amount          | A bonus applies when two or more fire together                                    |
+| Linked accounts   | Distinct accounts per device (strong) and per IP (weak) over 7 days      | Cap of 50 accounts, extra weight when linked to a blocked account                 |
+| Account age       | Time since signup, or since first seen when there is no signup time      | Very new accounts add weight                                                      |
 
 Each rule returns a weight and a reason. The weights add up to a risk score, and two thresholds map the score to allow, review or block.
 

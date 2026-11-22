@@ -52,9 +52,9 @@ All seven are possible once the data is merged.
 
 - **What it does:** Divides the distance between the last and current location by the time between them, and flags speeds that are not possible.
 - **What it is for:** One card used in two far apart places.
-- **Data:** Dataset 2 city and timestamp.
-- **Tradeoff:** Cities are US and BD only, and I need coordinates for them. Dataset 1 country from IP is unreliable because 21,966 rows cannot be mapped.
-- **My fix:** I build a city to coordinates table from the cities in dataset 2 and use that, not the IP country. I inject 500 pairs of transactions in two distant cities within too short a time.
+- **Data:** Dataset 2 city and timestamp, plus Bangladesh cities from my generator.
+- **Tradeoff:** The dataset 2 cities are US cities and I need coordinates for them. Bangladesh is small, so the two farthest Bangladesh cities are under 800 km apart and an impossible trip there means a gap of minutes. Dataset 1 country from IP is unreliable because 21,966 rows cannot be mapped.
+- **My fix:** `geo.rs` holds both sets of cities with coordinates: the US cities of dataset 2, used as they are, and Bangladesh, all 64 districts plus other large towns, for internal fraud checks. The generator places part of its users in Bangladesh cities. I inject 500 pairs of transactions in two distant cities within too short a time, some in the US and some in Bangladesh a few minutes apart.
 
 ### 4. New device risk
 
