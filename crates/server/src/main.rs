@@ -9,7 +9,7 @@ use axum::{
     routing::{get, post},
 };
 // the decision logic, its settings and its types.
-use engine::{AccountEvent, Config, Decision, Engine, TransactionEvent};
+use engine::{AccountEvent, Config, Decision, Engine, Entities, TransactionEvent};
 // the storage contract and the in memory version.
 use store::{InMemoryStore, Store};
 
@@ -34,12 +34,27 @@ async fn evaluate_handler<S: Store>(
     // the transaction, parsed from the JSON request body.
     Json(event): Json<TransactionEvent>,
 ) -> Json<Decision> {
+    // the keys of the device and the IP records, the prefix keeps the two kinds apart.
+    let device_key = format!("device:{}", event.device_id);
+    // the key of the IP record.
+    let ip_key = format!("ip:{}", event.ip);
     // read the remembered state for this user.
     let state = app.store.get(&event.user_id).await;
-    // run the engine, it returns the decision and the updated state.
-    let (decision, next) = app.engine.evaluate(&event, &state);
-    // save the updated state.
+    // read what is remembered about the device and the IP.
+    let entities = Entities {
+        device: app.store.get_entity(&device_key).await,
+        ip: app.store.get_entity(&ip_key).await,
+    };
+    // run the engine, it returns the decision and the updated records.
+    let (decision, next, next_entities) = app.engine.evaluate(&event, &state, &entities);
+    // save the updated user state.
     app.store.put(&event.user_id, next).await;
+    // save the updated device record.
+    app.store
+        .put_entity(&device_key, next_entities.device)
+        .await;
+    // save the updated IP record.
+    app.store.put_entity(&ip_key, next_entities.ip).await;
     // send the decision back as JSON.
     Json(decision)
 }

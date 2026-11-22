@@ -193,7 +193,7 @@ mod tests {
         assert!(matches!(decision.outcome, Outcome::Block));
     }
 
-        // a blocked device alone is enough to block.
+    // a blocked device alone is enough to block.
     #[test]
     fn blocked_device_is_blocked() {
         // default engine.

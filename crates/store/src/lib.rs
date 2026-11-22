@@ -13,7 +13,7 @@ pub trait Store: Send + Sync + 'static {
     fn get(&self, user_id: &str) -> impl Future<Output = UserState> + Send;
     // save the state of one user.
     fn put(&self, user_id: &str, state: UserState) -> impl Future<Output = ()> + Send;
-        // read what is remembered about one device or IP, the key names which one, a new key gets an empty record.
+    // read what is remembered about one device or IP, the key names which one, a new key gets an empty record.
     fn get_entity(&self, key: &str) -> impl Future<Output = EntityState> + Send;
     // save what is remembered about one device or IP.
     fn put_entity(&self, key: &str, entity: EntityState) -> impl Future<Output = ()> + Send;
@@ -24,7 +24,7 @@ pub trait Store: Send + Sync + 'static {
 pub struct InMemoryStore {
     // user id to state, behind a lock because requests run at the same time.
     users: Mutex<HashMap<String, UserState>>,
-        // device or IP key to record, behind its own lock.
+    // device or IP key to record, behind its own lock.
     entities: Mutex<HashMap<String, EntityState>>,
 }
 
@@ -47,7 +47,7 @@ impl Store for InMemoryStore {
             .unwrap()
             .insert(user_id.to_string(), state);
     }
-        async fn get_entity(&self, key: &str) -> EntityState {
+    async fn get_entity(&self, key: &str) -> EntityState {
         // lock the map, copy this record out, or use an empty record for a new key.
         self.entities
             .lock()
