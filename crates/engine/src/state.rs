@@ -1,5 +1,8 @@
 // the transaction type that gets recorded into the state, and the city table.
-use crate::{event::TransactionEvent, geo};
+use crate::{
+    event::{AccountEvent, AccountEventKind, TransactionEvent},
+    geo,
+};
 
 // number of time slots in the velocity window.
 const SLOTS: usize = 12;
@@ -8,7 +11,7 @@ const SLOT_SECONDS: i64 = 300;
 // most devices remembered per user, the oldest is forgotten when the list is full.
 const MAX_DEVICES: usize = 5;
 
-// counts transactions per 5 minute slot, a slot starts again when time reaches it a second time.
+// counts events per 5 minute slot, a slot starts again when time reaches it a second time.
 #[derive(Debug, Clone, Default)]
 pub struct Velocity {
     // each slot stores the id of the time slot it belongs to and the count seen in it.
@@ -157,6 +160,10 @@ pub struct UserState {
     pub devices: KnownDevices,
     // last position that could be placed on the map, empty until then.
     pub last_place: Option<Place>,
+    // failed logins per 5 minute slot for the last hour.
+    pub failed_logins: Velocity,
+    // time of the last password change, empty until one happens.
+    pub password_changed_at: Option<i64>,
 }
 
 impl UserState {
@@ -177,6 +184,16 @@ impl UserState {
                 pos,
                 time: event.timestamp,
             });
+        }
+    }
+    // adds one piece of account activity to the remembered state.
+    pub fn record_account(&mut self, event: &AccountEvent) {
+        // each kind of activity updates its own field.
+        match event.kind {
+            // count the failed login in its time slot.
+            AccountEventKind::FailedLogin => self.failed_logins.record(event.timestamp),
+            // remember when the password changed.
+            AccountEventKind::PasswordChanged => self.password_changed_at = Some(event.timestamp),
         }
     }
 }
@@ -264,5 +281,29 @@ mod tests {
         state.record(&event);
         // the stored position still carries the first time.
         assert_eq!(state.last_place.unwrap().time, 100);
+    }
+    // account activity updates the failed login counter and the password time, not the first seen time.
+    #[test]
+    fn account_events_update_the_state() {
+        // start with an empty state.
+        let mut state = UserState::default();
+        // one failed login at time 100.
+        state.record_account(&AccountEvent {
+            user_id: "u1".to_string(),
+            timestamp: 100,
+            kind: AccountEventKind::FailedLogin,
+        });
+        // one password change at time 200.
+        state.record_account(&AccountEvent {
+            user_id: "u1".to_string(),
+            timestamp: 200,
+            kind: AccountEventKind::PasswordChanged,
+        });
+        // the failed login is counted.
+        assert_eq!(state.failed_logins.count(100), 1);
+        // the password time is stored.
+        assert_eq!(state.password_changed_at, Some(200));
+        // account activity is not a transaction, so the first seen time stays empty.
+        assert_eq!(state.first_seen, None);
     }
 }
