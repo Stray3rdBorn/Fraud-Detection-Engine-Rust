@@ -249,7 +249,10 @@ mod tests {
         // every alias leads to a name in the table.
         for &(alias, current) in ALIASES {
             // the target exists.
-            assert!(CITIES.iter().any(|(city, _, _)| *city == current), "{alias}");
+            assert!(
+                CITIES.iter().any(|(city, _, _)| *city == current),
+                "{alias}"
+            );
         }
     }
 }

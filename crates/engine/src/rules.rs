@@ -52,7 +52,7 @@ impl Rule for AmountAnomalyRule {
                 reason: "amount: not enough history for this user".to_string(),
             });
         }
-       
+
         // how many spreads this amount sits above the average.
         let z = state.amounts.z(event.amount, config.amount_min_spread);
         // below the starting point the amount is normal.
@@ -203,9 +203,11 @@ mod tests {
         // five above the free amount, four points each.
         assert_eq!(hit.weight, 20);
         // an empty state stays silent.
-        assert!(VelocityRule
-            .check(&sample_event(1_000, 10.0), &UserState::default(), &config)
-            .is_none());
+        assert!(
+            VelocityRule
+                .check(&sample_event(1_000, 10.0), &UserState::default(), &config)
+                .is_none()
+        );
     }
 
     // new users get the small caution, spikes get the cap, normal amounts get nothing.
@@ -228,12 +230,14 @@ mod tests {
         // the cap is 40.
         assert_eq!(spike.weight, 40);
         // an amount of 25 is normal.
-        assert!(AmountAnomalyRule
-            .check(&sample_event(0, 25.0), &state, &config)
-            .is_none());
+        assert!(
+            AmountAnomalyRule
+                .check(&sample_event(0, 25.0), &state, &config)
+                .is_none()
+        );
     }
 
-        // an unknown device fires, a larger amount raises the weight, known and first devices do not fire.
+    // an unknown device fires, a larger amount raises the weight, known and first devices do not fire.
     #[test]
     fn new_device_rule_scores_unknown_devices() {
         // default settings.
@@ -245,15 +249,29 @@ mod tests {
         // set the new device.
         event.device_id = "d2".to_string();
         // the base weight applies.
-        assert_eq!(NewDeviceRule.check(&event, &state, &config).unwrap().weight, 20);
+        assert_eq!(
+            NewDeviceRule.check(&event, &state, &config).unwrap().weight,
+            20
+        );
         // a large amount on the new device adds the bonus.
         event.amount = 500.0;
         // base plus bonus.
-        assert_eq!(NewDeviceRule.check(&event, &state, &config).unwrap().weight, 40);
+        assert_eq!(
+            NewDeviceRule.check(&event, &state, &config).unwrap().weight,
+            40
+        );
         // the known device does not fire.
-        assert!(NewDeviceRule.check(&sample_event(0, 25.0), &state, &config).is_none());
+        assert!(
+            NewDeviceRule
+                .check(&sample_event(0, 25.0), &state, &config)
+                .is_none()
+        );
         // a user with no devices yet does not fire.
-        assert!(NewDeviceRule.check(&event, &UserState::default(), &config).is_none());
+        assert!(
+            NewDeviceRule
+                .check(&event, &UserState::default(), &config)
+                .is_none()
+        );
     }
 
     // a far city in one hour fires, the same trip over a day does not, unknown cities are ignored.
@@ -275,7 +293,10 @@ mod tests {
         next.city = Some("Los Angeles".to_string());
         // about 3936 km in one hour is not possible.
         assert_eq!(
-            ImpossibleTravelRule.check(&next, &state, &config).unwrap().weight,
+            ImpossibleTravelRule
+                .check(&next, &state, &config)
+                .unwrap()
+                .weight,
             60
         );
         // the same trip a day later is possible.
@@ -310,12 +331,16 @@ mod tests {
         // signup one day before the transaction.
         event.signup_time = Some(100_000 - 86_400);
         // an old account does not fire.
-        assert!(AccountAgeRule
-            .check(&event, &UserState::default(), &config)
-            .is_none());
+        assert!(
+            AccountAgeRule
+                .check(&event, &UserState::default(), &config)
+                .is_none()
+        );
         // no signup time and no history gives nothing.
-        assert!(AccountAgeRule
-            .check(&sample_event(100_000, 10.0), &UserState::default(), &config)
-            .is_none());
+        assert!(
+            AccountAgeRule
+                .check(&sample_event(100_000, 10.0), &UserState::default(), &config)
+                .is_none()
+        );
     }
 }

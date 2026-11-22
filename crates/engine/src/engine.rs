@@ -2,7 +2,7 @@
 use crate::{
     config::Config,
     event::{Decision, Outcome, TransactionEvent},
-        rules::{
+    rules::{
         AccountAgeRule, AmountAnomalyRule, ImpossibleTravelRule, NewDeviceRule, Rule, VelocityRule,
     },
     state::UserState,

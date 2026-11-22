@@ -11,7 +11,6 @@ mod rules;
 // what the engine remembers about one user.
 mod state;
 
-
 // make these names available to other crates as engine::Name.
 pub use config::Config;
 pub use engine::Engine;
