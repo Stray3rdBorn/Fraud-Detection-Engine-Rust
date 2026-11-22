@@ -47,6 +47,24 @@ pub struct Config {
     pub takeover_weight: u32,
     // extra weight for every signal above the minimum.
     pub takeover_per_extra: u32,
+    // weight added when the account, the device or the IP is on the blocklist.
+    pub blocklist_weight: u32,
+    // seconds an account stays linked to a device or IP after it was last seen there, 7 days.
+    pub link_window: i64,
+    // accounts on one device that cost no weight, the user alone.
+    pub device_free_accounts: u32,
+    // weight added for every further account on the same device.
+    pub device_per_account: u32,
+    // highest weight the device link can add.
+    pub device_max_weight: u32,
+    // accounts on one IP that cost no weight, homes and offices share IPs.
+    pub ip_free_accounts: u32,
+    // weight added for every further account on the same IP.
+    pub ip_per_account: u32,
+    // highest weight the IP link can add.
+    pub ip_max_weight: u32,
+    // extra weight when a blocked account used the same device or IP inside the window.
+    pub linked_blocked_weight: u32,
 }
 
 // starting values, they are tuned later with the threshold sweep on the test data.
@@ -99,6 +117,24 @@ impl Default for Config {
             takeover_weight: 30,
             // every further signal adds 15, so all four reach 60.
             takeover_per_extra: 15,
+            // a blocklist hit alone is enough to block.
+            blocklist_weight: 100,
+            // links last 7 days.
+            link_window: 604_800,
+            // one account on a device is normal.
+            device_free_accounts: 1,
+            // every further account on a device adds 15, a strong signal.
+            device_per_account: 15,
+            // the device link never adds more than 60.
+            device_max_weight: 60,
+            // up to 3 accounts on an IP are normal.
+            ip_free_accounts: 3,
+            // every further account on an IP adds 3, a weak signal.
+            ip_per_account: 3,
+            // the IP link never adds more than 20.
+            ip_max_weight: 20,
+            // a link to a blocked account adds 30.
+            linked_blocked_weight: 30,
         }
     }
 }

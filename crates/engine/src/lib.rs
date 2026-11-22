@@ -6,6 +6,8 @@ mod engine;
 mod event;
 // city coordinates and distance.
 mod geo;
+// turns ids into 64 bit numbers.
+mod hash;
 // the rule contract and the individual rules.
 mod rules;
 // what the engine remembers about one user.
@@ -15,4 +17,4 @@ mod state;
 pub use config::Config;
 pub use engine::Engine;
 pub use event::{AccountEvent, AccountEventKind, Decision, Outcome, TransactionEvent};
-pub use state::UserState;
+pub use state::{Entities, EntityState, UserState};
