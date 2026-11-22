@@ -1,5 +1,11 @@
 // settings, event and state types the rules read from.
-use crate::{config::Config, event::TransactionEvent, geo, state::UserState};
+use crate::{
+    config::Config,
+    event::TransactionEvent,
+    geo,
+    hash::id_hash,
+    state::{Entities, UserState},
+};
 
 // what a rule reports when it fires.
 pub struct Hit {
@@ -13,6 +19,28 @@ pub struct Hit {
 pub trait Rule: Send + Sync {
     // returns a hit when the rule fires and nothing when the transaction looks normal.
     fn check(&self, event: &TransactionEvent, state: &UserState, config: &Config) -> Option<Hit>;
+}
+
+// the contract for rules that also look at the device and the IP, which are shared between accounts.
+pub trait EntityRule: Send + Sync {
+    // returns a hit when the rule fires and nothing when the transaction looks normal.
+    fn check(
+        &self,
+        event: &TransactionEvent,
+        user: &UserState,
+        entities: &Entities,
+        config: &Config,
+    ) -> Option<Hit>;
+}
+
+// names of the signals that answered yes.
+fn fired_names<'a>(signals: &[(&'a str, bool)]) -> Vec<&'a str> {
+    // keep the names whose answer is yes.
+    signals
+        .iter()
+        .filter(|(_, on)| *on)
+        .map(|(name, _)| *name)
+        .collect()
 }
 
 // flags users who make many transactions within one hour.
@@ -199,11 +227,7 @@ impl Rule for AccountTakeoverRule {
             ("large amount", is_large_amount(event, state, config)),
         ];
         // keep the names of the signals that answered yes.
-        let fired: Vec<&str> = signals
-            .iter()
-            .filter(|(_, on)| *on)
-            .map(|(name, _)| *name)
-            .collect();
+        let fired = fired_names(&signals);
         // number of signals that fired.
         let count = fired.len() as u32;
         // too few signals together is not a takeover.
@@ -222,12 +246,111 @@ impl Rule for AccountTakeoverRule {
     }
 }
 
+// flags an account, a device or an IP that is on the blocklist.
+pub struct BlocklistRule;
+
+impl EntityRule for BlocklistRule {
+    fn check(
+        &self,
+        event: &TransactionEvent,
+        user: &UserState,
+        entities: &Entities,
+        config: &Config,
+    ) -> Option<Hit> {
+        // each place a block can sit, with its yes or no answer.
+        let checks = [
+            ("account", user.is_blocked(event.timestamp)),
+            ("device", entities.device.is_blocked(event.timestamp)),
+            ("IP", entities.ip.is_blocked(event.timestamp)),
+        ];
+        // the names of the places that are blocked.
+        let blocked = fired_names(&checks);
+        // nothing blocked means nothing fires.
+        if blocked.is_empty() {
+            // normal activity.
+            return None;
+        }
+        // one hit with a heavy weight, the reason names every blocked place.
+        Some(Hit {
+            weight: config.blocklist_weight,
+            reason: format!("blocklist: {} blocked", blocked.join(", ")),
+        })
+    }
+}
+
+// flags devices and IPs that are shared by many accounts, a sign of fraud rings.
+pub struct LinkedAccountsRule;
+
+impl EntityRule for LinkedAccountsRule {
+    fn check(
+        &self,
+        event: &TransactionEvent,
+        _user: &UserState,
+        entities: &Entities,
+        config: &Config,
+    ) -> Option<Hit> {
+        // the account as a number, which is how the lists remember it.
+        let user = id_hash(&event.user_id);
+        // accounts on the device including this one.
+        let on_device = entities
+            .device
+            .accounts_with(user, event.timestamp, config.link_window);
+        // accounts on the IP including this one.
+        let on_ip = entities
+            .ip
+            .accounts_with(user, event.timestamp, config.link_window);
+        // a shared device is a strong signal, it grows with every extra account and stops at the cap.
+        let device_weight = on_device
+            .saturating_sub(config.device_free_accounts)
+            .saturating_mul(config.device_per_account)
+            .min(config.device_max_weight);
+        // a shared IP is a weak signal, because homes and offices share IPs.
+        let ip_weight = on_ip
+            .saturating_sub(config.ip_free_accounts)
+            .saturating_mul(config.ip_per_account)
+            .min(config.ip_max_weight);
+        // a blocked account that used the same device or IP recently adds more.
+        let near_blocked = entities
+            .device
+            .has_blocked_account(event.timestamp, config.link_window)
+            || entities
+                .ip
+                .has_blocked_account(event.timestamp, config.link_window);
+        // the extra weight applies only when such a link exists.
+        let blocked_weight = if near_blocked {
+            config.linked_blocked_weight
+        } else {
+            0
+        };
+        // all parts together.
+        let weight = device_weight + ip_weight + blocked_weight;
+        // nothing shared and nothing blocked means nothing fires.
+        if weight == 0 {
+            // normal activity.
+            return None;
+        }
+        // report the counts, and the blocked link when there is one.
+        Some(Hit {
+            weight,
+            reason: format!(
+                "linked accounts: {on_device} on this device, {on_ip} on this IP{}",
+                if near_blocked {
+                    ", linked to a blocked account"
+                } else {
+                    ""
+                }
+            ),
+        })
+    }
+}
+
 // tests for the rules.
 #[cfg(test)]
 mod tests {
     // bring the rules and helpers into the tests.
     use super::*;
     use crate::event::{AccountEvent, AccountEventKind, sample_event};
+    use crate::state::EntityState;
 
     // builds a state that has seen the given amounts, all at time zero.
     fn state_with(amounts: &[f64]) -> UserState {
@@ -293,6 +416,158 @@ mod tests {
                 .check(&sample_event(0, 25.0), &state, &config)
                 .is_none()
         );
+    }
+
+    // builds a device or IP record that has seen the given accounts at time zero.
+    fn entity_with(users: &[&str]) -> EntityState {
+        // start empty.
+        let mut entity = EntityState::default();
+        // record every account.
+        for user in users {
+            // add one account.
+            entity.record(id_hash(user), 0, false);
+        }
+        // hand back the filled record.
+        entity
+    }
+
+    // any blocked place fires with the heavy weight, an expired block does not.
+    #[test]
+    fn blocklist_rule_names_the_blocked_places() {
+        // default settings.
+        let config = Config::default();
+        // the device is blocked until time 1000.
+        let mut entities = Entities::default();
+        // set the block.
+        entities.device.blocked_until = Some(1_000);
+        // a transaction at time 100 is inside the block.
+        let hit = BlocklistRule
+            .check(
+                &sample_event(100, 10.0),
+                &UserState::default(),
+                &entities,
+                &config,
+            )
+            .unwrap();
+        // the weight is the blocklist weight.
+        assert_eq!(hit.weight, 100);
+        // the reason names the device.
+        assert!(hit.reason.contains("device"));
+        // at time 1000 the block has ended.
+        assert!(
+            BlocklistRule
+                .check(
+                    &sample_event(1_000, 10.0),
+                    &UserState::default(),
+                    &entities,
+                    &config
+                )
+                .is_none()
+        );
+        // a blocked account fires too and is named.
+        let user = UserState {
+            blocked_until: Some(1_000),
+            ..UserState::default()
+        };
+        // check with clean entities.
+        let hit = BlocklistRule
+            .check(
+                &sample_event(100, 10.0),
+                &user,
+                &Entities::default(),
+                &config,
+            )
+            .unwrap();
+        // the reason names the account.
+        assert!(hit.reason.contains("account"));
+    }
+
+    // a shared device is strong, a shared IP is weak, old links and the account itself do not count.
+    #[test]
+    fn linked_accounts_rule_weights_device_strong_and_ip_weak() {
+        // default settings.
+        let config = Config::default();
+        // a user without history, the entities carry all the information.
+        let user = UserState::default();
+        // the transaction is from account u1.
+        let event = sample_event(100, 10.0);
+        // nothing shared gives nothing.
+        assert!(
+            LinkedAccountsRule
+                .check(&event, &user, &Entities::default(), &config)
+                .is_none()
+        );
+        // three other accounts on the device make four with u1, so three extra at 15.
+        let device = Entities {
+            device: entity_with(&["a", "b", "c"]),
+            ip: EntityState::default(),
+        };
+        // the device weight is 45.
+        assert_eq!(
+            LinkedAccountsRule
+                .check(&event, &user, &device, &config)
+                .unwrap()
+                .weight,
+            45
+        );
+        // five other accounts on the IP make six with u1, so three above the free three, at 3.
+        let ip = Entities {
+            device: EntityState::default(),
+            ip: entity_with(&["a", "b", "c", "d", "e"]),
+        };
+        // the IP weight is 9.
+        assert_eq!(
+            LinkedAccountsRule
+                .check(&event, &user, &ip, &config)
+                .unwrap()
+                .weight,
+            9
+        );
+        // u1 already on the device is not counted twice, so one other account gives one extra at 15.
+        let known = Entities {
+            device: entity_with(&["u1", "a"]),
+            ip: EntityState::default(),
+        };
+        // the weight is 15.
+        assert_eq!(
+            LinkedAccountsRule
+                .check(&event, &user, &known, &config)
+                .unwrap()
+                .weight,
+            15
+        );
+        // links older than 7 days are forgotten, so a transaction 8 days later gives nothing.
+        let late = sample_event(8 * 86_400, 10.0);
+        // no hit.
+        assert!(
+            LinkedAccountsRule
+                .check(&late, &user, &device, &config)
+                .is_none()
+        );
+    }
+
+    // a blocked account on the same device adds the extra weight even without a crowd.
+    #[test]
+    fn linked_accounts_rule_adds_weight_near_a_blocked_account() {
+        // default settings.
+        let config = Config::default();
+        // the device saw a blocked account at time 50.
+        let mut entities = Entities::default();
+        // set the mark.
+        entities.device.blocked_account_at = Some(50);
+        // a transaction at time 100.
+        let hit = LinkedAccountsRule
+            .check(
+                &sample_event(100, 10.0),
+                &UserState::default(),
+                &entities,
+                &config,
+            )
+            .unwrap();
+        // the weight is the blocked link weight.
+        assert_eq!(hit.weight, 30);
+        // the reason mentions the blocked account.
+        assert!(hit.reason.contains("blocked account"));
     }
 
     // builds one piece of account activity for tests.

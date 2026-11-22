@@ -2,11 +2,12 @@
 use crate::{
     config::Config,
     event::{Decision, Outcome, TransactionEvent},
+    hash::id_hash,
     rules::{
-        AccountAgeRule, AccountTakeoverRule, AmountAnomalyRule, ImpossibleTravelRule,
-        NewDeviceRule, Rule, VelocityRule,
+        AccountAgeRule, AccountTakeoverRule, AmountAnomalyRule, BlocklistRule, EntityRule,
+        ImpossibleTravelRule, LinkedAccountsRule, NewDeviceRule, Rule, VelocityRule,
     },
-    state::UserState,
+    state::{Entities, UserState},
 };
 
 // runs every rule on a transaction and turns the hits into one decision.
@@ -15,6 +16,8 @@ pub struct Engine {
     config: Config,
     // the rules, stored behind one common type so they can sit in one list.
     rules: Vec<Box<dyn Rule>>,
+    // the rules that also look at the device and the IP.
+    entity_rules: Vec<Box<dyn EntityRule>>,
 }
 
 impl Engine {
@@ -29,18 +32,36 @@ impl Engine {
             Box::new(ImpossibleTravelRule),
             Box::new(AccountTakeoverRule),
         ];
+        // the rules that need the device and the IP, new ones are added here.
+        let entity_rules: Vec<Box<dyn EntityRule>> =
+            vec![Box::new(BlocklistRule), Box::new(LinkedAccountsRule)];
         // keep the settings and the rules together.
-        Engine { config, rules }
+        Engine {
+            config,
+            rules,
+            entity_rules,
+        }
     }
 
-    // decides one transaction and returns the decision plus the updated user state.
-    pub fn evaluate(&self, event: &TransactionEvent, state: &UserState) -> (Decision, UserState) {
-        // ask every rule and keep only the ones that fired.
-        let hits: Vec<_> = self
+    // decides one transaction and returns the decision plus the updated user, device and IP records.
+    pub fn evaluate(
+        &self,
+        event: &TransactionEvent,
+        state: &UserState,
+        entities: &Entities,
+    ) -> (Decision, UserState, Entities) {
+        // ask every rule that looks at the user alone and keep only the ones that fired.
+        let user_hits = self
             .rules
             .iter()
-            .filter_map(|rule| rule.check(event, state, &self.config))
-            .collect();
+            .filter_map(|rule| rule.check(event, state, &self.config));
+        // ask every rule that also looks at the device and the IP.
+        let entity_hits = self
+            .entity_rules
+            .iter()
+            .filter_map(|rule| rule.check(event, state, entities, &self.config));
+        // all hits in one list.
+        let hits: Vec<_> = user_hits.chain(entity_hits).collect();
         // the risk score is the sum of all weights.
         let score: u32 = hits.iter().map(|hit| hit.weight).sum();
         // the thresholds turn the score into an outcome.
@@ -59,11 +80,19 @@ impl Engine {
             .iter()
             .map(|hit| format!("{} (+{})", hit.reason, hit.weight))
             .collect();
-        // the new state is a copy of the old one with this transaction added.
+        // the new user state is a copy of the old one with this transaction added.
         let mut next = state.clone();
         // record the transaction.
         next.record(event);
-        // hand back both results.
+        // the device and IP records get the same treatment, they learn that this account used them.
+        let mut next_entities = entities.clone();
+        // the account is remembered as a number, and the record notes whether the account was blocked.
+        next_entities.record(
+            id_hash(&event.user_id),
+            event.timestamp,
+            state.is_blocked(event.timestamp),
+        );
+        // hand back everything.
         (
             Decision {
                 event_id: event.event_id.clone(),
@@ -72,6 +101,7 @@ impl Engine {
                 reasons,
             },
             next,
+            next_entities,
         )
     }
 }
@@ -96,7 +126,8 @@ mod tests {
             state.record(&sample_event(i * 10_000, 20.0));
         }
         // a normal purchase.
-        let (decision, _) = engine.evaluate(&sample_event(100_000, 22.0), &state);
+        let (decision, _, _) =
+            engine.evaluate(&sample_event(100_000, 22.0), &state, &Entities::default());
         // nothing fires.
         assert_eq!(decision.score, 0);
         // the outcome is allow.
@@ -120,7 +151,7 @@ mod tests {
         // set the signup time.
         event.signup_time = Some(99_999);
         // decide it.
-        let (decision, _) = engine.evaluate(&event, &state);
+        let (decision, _, _) = engine.evaluate(&event, &state, &Entities::default());
         // velocity 20 plus amount 40 plus account age 39.
         assert_eq!(decision.score, 99);
         // the outcome is block.
@@ -155,11 +186,65 @@ mod tests {
         // set the new device.
         event.device_id = "d2".to_string();
         // decide it.
-        let (decision, _) = engine.evaluate(&event, &state);
+        let (decision, _, _) = engine.evaluate(&event, &state, &Entities::default());
         // amount 40 plus new device 40 plus takeover 45.
         assert_eq!(decision.score, 125);
         // the outcome is block.
         assert!(matches!(decision.outcome, Outcome::Block));
+    }
+
+        // a blocked device alone is enough to block.
+    #[test]
+    fn blocked_device_is_blocked() {
+        // default engine.
+        let engine = Engine::new(Config::default());
+        // the device is blocked for a long time.
+        let mut entities = Entities::default();
+        // set the block.
+        entities.device.blocked_until = Some(1_000_000);
+        // an otherwise normal transaction.
+        let (decision, _, _) =
+            engine.evaluate(&sample_event(100, 20.0), &UserState::default(), &entities);
+        // the blocklist weight is 100, plus 10 for no history.
+        assert_eq!(decision.score, 110);
+        // the outcome is block.
+        assert!(matches!(decision.outcome, Outcome::Block));
+    }
+
+    // many accounts on one device build up, and the returned records remember the account.
+    #[test]
+    fn shared_device_builds_up_and_is_remembered() {
+        // default engine.
+        let engine = Engine::new(Config::default());
+        // the first account uses the device and the IP.
+        let (_, _, mut entities) = engine.evaluate(
+            &sample_event(100, 20.0),
+            &UserState::default(),
+            &Entities::default(),
+        );
+        // five more accounts share the same device.
+        for user in ["b", "c", "d", "e", "f"] {
+            // each one is a new account on the same device.
+            let mut event = sample_event(100, 20.0);
+            // set the account.
+            event.user_id = user.to_string();
+            // decide and keep the updated records.
+            let (_, _, next) = engine.evaluate(&event, &UserState::default(), &entities);
+            // the updated records replace the old ones.
+            entities = next;
+        }
+        // a seventh account on the same device.
+        let mut event = sample_event(100, 20.0);
+        // set the account.
+        event.user_id = "g".to_string();
+        // decide it.
+        let (decision, _, next) = engine.evaluate(&event, &UserState::default(), &entities);
+        // device part 60 at the cap, IP part 12, cold start 10.
+        assert_eq!(decision.score, 82);
+        // the outcome is block.
+        assert!(matches!(decision.outcome, Outcome::Block));
+        // the returned record knows the new account.
+        assert_eq!(next.device.accounts_with(id_hash("g"), 100, 604_800), 7);
     }
 
     // the returned state includes the new transaction.
@@ -168,7 +253,11 @@ mod tests {
         // default engine.
         let engine = Engine::new(Config::default());
         // decide one transaction on an empty state.
-        let (_, next) = engine.evaluate(&sample_event(5_000, 30.0), &UserState::default());
+        let (_, next, _) = engine.evaluate(
+            &sample_event(5_000, 30.0),
+            &UserState::default(),
+            &Entities::default(),
+        );
         // the amount was recorded.
         assert_eq!(next.amounts.count(), 1);
         // the first seen time was set.

@@ -166,7 +166,7 @@ pub struct UserState {
     pub failed_logins: Velocity,
     // time of the last password change, empty until one happens.
     pub password_changed_at: Option<i64>,
-        // time until which this account is blocked, empty when it is not.
+    // time until which this account is blocked, empty when it is not.
     pub blocked_until: Option<i64>,
 }
 
@@ -191,7 +191,7 @@ impl UserState {
         }
     }
 
-        // true when the account is on the blocklist at the given time.
+    // true when the account is on the blocklist at the given time.
     pub fn is_blocked(&self, now: i64) -> bool {
         // a block counts until its end time.
         self.blocked_until.is_some_and(|until| until > now)
@@ -259,7 +259,11 @@ impl EntityState {
     // records that an account used this device or IP.
     pub fn record(&mut self, user: u64, now: i64, user_blocked: bool) {
         // an account that is already known only gets a newer time, an older time never replaces a newer one.
-        if let Some(entry) = self.accounts.iter_mut().find(|(account, _)| *account == user) {
+        if let Some(entry) = self
+            .accounts
+            .iter_mut()
+            .find(|(account, _)| *account == user)
+        {
             // keep the later time.
             entry.1 = entry.1.max(now);
         } else {
@@ -415,7 +419,7 @@ mod tests {
         // account activity is not a transaction, so the first seen time stays empty.
         assert_eq!(state.first_seen, None);
     }
-        // distinct accounts are counted inside the window, and the given account is never counted twice.
+    // distinct accounts are counted inside the window, and the given account is never counted twice.
     #[test]
     fn entity_counts_distinct_accounts_in_the_window() {
         // start with an empty entity.
