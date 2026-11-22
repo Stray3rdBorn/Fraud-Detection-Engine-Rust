@@ -5,10 +5,11 @@ use std::sync::Arc;
 use axum::{
     Json, Router,
     extract::State,
+    http::StatusCode,
     routing::{get, post},
 };
 // the decision logic, its settings and its types.
-use engine::{Config, Decision, Engine, TransactionEvent};
+use engine::{AccountEvent, Config, Decision, Engine, TransactionEvent};
 // the storage contract and the in memory version.
 use store::{InMemoryStore, Store};
 
@@ -43,6 +44,23 @@ async fn evaluate_handler<S: Store>(
     Json(decision)
 }
 
+// handles one piece of account activity: read state, record it, save state.
+async fn account_event_handler<S: Store>(
+    // the shared application state.
+    State(app): State<Arc<AppState<S>>>,
+    // the account activity, parsed from the JSON request body.
+    Json(event): Json<AccountEvent>,
+) -> StatusCode {
+    // read the remembered state for this user.
+    let mut state = app.store.get(&event.user_id).await;
+    // add the activity to the state.
+    state.record_account(&event);
+    // save the updated state.
+    app.store.put(&event.user_id, state).await;
+    // answer that the activity was stored and there is nothing to return.
+    StatusCode::NO_CONTENT
+}
+
 // starts the async runtime and runs the server.
 #[tokio::main]
 async fn main() {
@@ -57,6 +75,11 @@ async fn main() {
         .route("/health", get(health))
         // POST /v1/evaluate decides one transaction.
         .route("/v1/evaluate", post(evaluate_handler::<InMemoryStore>))
+        // POST /v1/account-events records a failed login or a password change.
+        .route(
+            "/v1/account-events",
+            post(account_event_handler::<InMemoryStore>),
+        )
         // make the shared state available to every handler.
         .with_state(app_state);
     // listen on localhost only, port 3000.
