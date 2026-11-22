@@ -4,10 +4,13 @@ mod config;
 mod engine;
 // the transaction and decision types.
 mod event;
+// city coordinates and distance.
+mod geo;
 // the rule contract and the individual rules.
 mod rules;
 // what the engine remembers about one user.
 mod state;
+
 
 // make these names available to other crates as engine::Name.
 pub use config::Config;
