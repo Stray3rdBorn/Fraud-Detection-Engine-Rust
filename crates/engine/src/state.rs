@@ -1,10 +1,12 @@
-// the transaction type that gets recorded into the state.
-use crate::event::TransactionEvent;
+// the transaction type that gets recorded into the state, and the city table.
+use crate::{event::TransactionEvent, geo};
 
 // number of time slots in the velocity window.
 const SLOTS: usize = 12;
 // length of one slot in seconds, 12 slots of 5 minutes cover one hour.
 const SLOT_SECONDS: i64 = 300;
+// most devices remembered per user, the oldest is forgotten when the list is full.
+const MAX_DEVICES: usize = 5;
 
 // counts transactions per 5 minute slot, a slot starts again when time reaches it a second time.
 #[derive(Debug, Clone, Default)]
@@ -80,6 +82,12 @@ impl AmountStats {
         (self.m2 / (self.count - 1) as f64).sqrt()
     }
 
+    // how many spreads an amount sits above the average, the spread never counts below the floor.
+    pub fn z(&self, amount: f64, min_spread: f64) -> f64 {
+        // distance from the average divided by the spread.
+        (amount - self.mean) / self.std_dev().max(min_spread)
+    }
+
     // adds one amount, this is Welford's running update.
     pub fn record(&mut self, amount: f64) {
         // count the new amount.
@@ -93,6 +101,49 @@ impl AmountStats {
     }
 }
 
+// devices a user has used before, capped in size.
+#[derive(Debug, Clone, Default)]
+pub struct KnownDevices(Vec<String>);
+
+impl KnownDevices {
+    // true when no device has been seen yet.
+    pub fn is_empty(&self) -> bool {
+        // the list has no entries.
+        self.0.is_empty()
+    }
+
+    // true when this device has been used before.
+    pub fn contains(&self, device: &str) -> bool {
+        // look for an equal id in the list.
+        self.0.iter().any(|known| known == device)
+    }
+
+    // adds a device, forgetting the oldest one when the list is full.
+    pub fn remember(&mut self, device: &str) {
+        // a known device changes nothing.
+        if self.contains(device) {
+            // nothing to add.
+            return;
+        }
+        // a full list drops its oldest entry, which sits at the front.
+        if self.0.len() == MAX_DEVICES {
+            // remove the oldest device.
+            self.0.remove(0);
+        }
+        // add the new device at the back.
+        self.0.push(device.to_string());
+    }
+}
+
+// the last known position of a user and when it was seen.
+#[derive(Debug, Clone, Copy)]
+pub struct Place {
+    // latitude and longitude in degrees.
+    pub pos: (f64, f64),
+    // time of that transaction in unix seconds.
+    pub time: i64,
+}
+
 // everything the engine remembers about one user between transactions.
 #[derive(Debug, Clone, Default)]
 pub struct UserState {
@@ -102,6 +153,10 @@ pub struct UserState {
     pub velocity: Velocity,
     // running average and spread of this user's amounts.
     pub amounts: AmountStats,
+    // devices this user has used before.
+    pub devices: KnownDevices,
+    // last position that could be placed on the map, empty until then.
+    pub last_place: Option<Place>,
 }
 
 impl UserState {
@@ -113,6 +168,16 @@ impl UserState {
         self.velocity.record(event.timestamp);
         // add the amount to the running statistics.
         self.amounts.record(event.amount);
+        // remember the device.
+        self.devices.remember(&event.device_id);
+        // a city that is not in the table never replaces the last known position.
+        if let Some(pos) = event.city.as_deref().and_then(geo::lookup) {
+            // store the position with the time.
+            self.last_place = Some(Place {
+                pos,
+                time: event.timestamp,
+            });
+        }
     }
 }
 
@@ -121,6 +186,7 @@ impl UserState {
 mod tests {
     // bring the types above into the tests.
     use super::*;
+    use crate::event::sample_event;
 
     // transactions count for an hour, then they are forgotten.
     #[test]
@@ -158,5 +224,45 @@ mod tests {
         assert!((stats.mean() - 5.0).abs() < 1e-9);
         // the sample standard deviation is the square root of 32 divided by 7.
         assert!((stats.std_dev() - 2.138089935).abs() < 1e-6);
+    }
+    // the device list keeps at most five devices and forgets the oldest first.
+    #[test]
+    fn known_devices_are_capped_and_forget_the_oldest() {
+        // start with an empty list.
+        let mut devices = KnownDevices::default();
+        // remember six devices, one more than the cap.
+        for id in ["a", "b", "c", "d", "e", "f"] {
+            // add one device.
+            devices.remember(id);
+        }
+        // the oldest is gone.
+        assert!(!devices.contains("a"));
+        // the newest is there.
+        assert!(devices.contains("f"));
+        // remembering a known device changes nothing.
+        devices.remember("b");
+        // the next oldest is still there.
+        assert!(devices.contains("c"));
+    }
+
+    // a city outside the table never replaces the last known position.
+    #[test]
+    fn unknown_city_keeps_the_last_place() {
+        // start with an empty state.
+        let mut state = UserState::default();
+        // a transaction in a known city.
+        let mut event = sample_event(100, 10.0);
+        // set the city.
+        event.city = Some("Houston".to_string());
+        // record it.
+        state.record(&event);
+        // a later transaction in a city that is not in the table.
+        event.city = Some("Nowhere".to_string());
+        // set the later time.
+        event.timestamp = 200;
+        // record it.
+        state.record(&event);
+        // the stored position still carries the first time.
+        assert_eq!(state.last_place.unwrap().time, 100);
     }
 }

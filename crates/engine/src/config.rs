@@ -27,6 +27,16 @@ pub struct Config {
     pub account_age_window: i64,
     // highest weight the account age rule can add, reached at an age of zero.
     pub account_age_max_weight: u32,
+    // weight added when a known user pays from a device not seen before.
+    pub new_device_weight: u32,
+    // extra weight added when that payment is also unusually large.
+    pub new_device_large_bonus: u32,
+    // fastest believable travel speed in kilometers per hour, about a passenger plane.
+    pub travel_max_kmh: f64,
+    // moves shorter than this many kilometers are ignored.
+    pub travel_min_km: f64,
+    // weight added when the speed between two cities is not possible.
+    pub travel_weight: u32,
 }
 
 // starting values, they are tuned later with the threshold sweep on the test data.
@@ -59,6 +69,16 @@ impl Default for Config {
             account_age_window: 3600,
             // a brand new account adds 40.
             account_age_max_weight: 40,
+            // a new device adds 20.
+            new_device_weight: 20,
+            // a large amount on a new device adds another 20.
+            new_device_large_bonus: 20,
+            // nobody travels faster than 900 km per hour.
+            travel_max_kmh: 900.0,
+            // moves under 100 km are ignored, city centers are not exact.
+            travel_min_km: 100.0,
+            // impossible travel alone sends the transaction to review.
+            travel_weight: 60,
         }
     }
 }

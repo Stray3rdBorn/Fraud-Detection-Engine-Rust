@@ -18,6 +18,8 @@ pub struct TransactionEvent {
     pub ip: String,
     // time the account was created in unix seconds, empty when the sender does not know it.
     pub signup_time: Option<i64>,
+    // city of the transaction, empty when the sender does not know it.
+    pub city: Option<String>,
 }
 
 // the three possible results of a decision, written in lowercase in JSON.
@@ -64,5 +66,7 @@ pub(crate) fn sample_event(timestamp: i64, amount: f64) -> TransactionEvent {
         ip: "10.0.0.1".to_string(),
         // no signup time unless a test sets one.
         signup_time: None,
+        // no city unless a test sets one.
+        city: None,
     }
 }
