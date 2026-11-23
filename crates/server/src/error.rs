@@ -24,7 +24,10 @@ impl IntoResponse for ApiError {
         let (status, message) = match self {
             ApiError::Invalid(message) => (StatusCode::UNPROCESSABLE_ENTITY, message),
             ApiError::Unauthorized => (StatusCode::UNAUTHORIZED, "Missing or wrong API key."),
-            ApiError::Busy => (StatusCode::SERVICE_UNAVAILABLE, "The service is busy, try again."),
+            ApiError::Busy => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "The service is busy, try again.",
+            ),
             ApiError::Unavailable => (
                 StatusCode::SERVICE_UNAVAILABLE,
                 "No decision could be made, try again.",

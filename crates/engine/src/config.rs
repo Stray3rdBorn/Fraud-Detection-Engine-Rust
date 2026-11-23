@@ -156,7 +156,9 @@ impl Config {
         }
         // review must come first, and a threshold of zero would review everything.
         if self.review_threshold == 0 || self.review_threshold > self.block_threshold {
-            return Err("review_threshold must be above 0 and not above block_threshold".to_string());
+            return Err(
+                "review_threshold must be above 0 and not above block_threshold".to_string(),
+            );
         }
         // the standard deviation needs at least two amounts.
         if self.amount_min_history < 2 {

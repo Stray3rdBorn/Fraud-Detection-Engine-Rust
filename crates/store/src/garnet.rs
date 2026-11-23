@@ -20,7 +20,7 @@ pub struct GarnetStore {
 }
 
 impl GarnetStore {
-    // connects to Garnet, the url looks like redis://:password@127.0.0.1:6379.
+    // connects to Garnet, the url looks like redis://:password@127.0.0.1:6380.
     pub async fn connect(url: &str) -> Result<Self, StoreError> {
         // parse the url.
         let client = redis::Client::open(url)?;

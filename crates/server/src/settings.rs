@@ -48,7 +48,9 @@ impl Settings {
         // a short key is refused.
         if api_key.len() < MIN_KEY_LEN {
             // say how long it must be.
-            return Err(format!("API_KEY must have at least {MIN_KEY_LEN} characters"));
+            return Err(format!(
+                "API_KEY must have at least {MIN_KEY_LEN} characters"
+            ));
         }
         // the address, localhost unless told otherwise.
         let bind = get("BIND_ADDR")
@@ -90,7 +92,8 @@ pub fn load_engine_config(path: Option<&str>) -> Result<Config, String> {
         return Ok(Config::default());
     };
     // read the file.
-    let text = std::fs::read_to_string(path).map_err(|error| format!("cannot read {path}: {error}"))?;
+    let text =
+        std::fs::read_to_string(path).map_err(|error| format!("cannot read {path}: {error}"))?;
     // parse and check it.
     parse_engine_config(&text)
 }
@@ -100,7 +103,9 @@ fn parse_engine_config(text: &str) -> Result<Config, String> {
     // parse the file, unknown names and wrong types are errors.
     let config: Config = toml::from_str(text).map_err(|error| format!("engine config: {error}"))?;
     // check the values.
-    config.validate().map_err(|error| format!("engine config: {error}"))?;
+    config
+        .validate()
+        .map_err(|error| format!("engine config: {error}"))?;
     // good.
     Ok(config)
 }
@@ -168,12 +173,28 @@ mod tests {
         // no Garnet address means no value.
         assert!(settings.garnet_url.is_none());
         // the clock check can be turned off.
-        let off = Settings::from_lookup(lookup(&[("API_KEY", "0123456789abcdef"), ("CLOCK_SKEW_SECONDS", "off")])).unwrap();
+        let off = Settings::from_lookup(lookup(&[
+            ("API_KEY", "0123456789abcdef"),
+            ("CLOCK_SKEW_SECONDS", "off"),
+        ]))
+        .unwrap();
         // no limit.
         assert_eq!(off.max_clock_skew, None);
         // a bad number is an error.
-        assert!(Settings::from_lookup(lookup(&[("API_KEY", "0123456789abcdef"), ("CLOCK_SKEW_SECONDS", "0")])).is_err());
+        assert!(
+            Settings::from_lookup(lookup(&[
+                ("API_KEY", "0123456789abcdef"),
+                ("CLOCK_SKEW_SECONDS", "0")
+            ]))
+            .is_err()
+        );
         // a bad address is an error.
-        assert!(Settings::from_lookup(lookup(&[("API_KEY", "0123456789abcdef"), ("BIND_ADDR", "nonsense")])).is_err());
+        assert!(
+            Settings::from_lookup(lookup(&[
+                ("API_KEY", "0123456789abcdef"),
+                ("BIND_ADDR", "nonsense")
+            ]))
+            .is_err()
+        );
     }
 }
