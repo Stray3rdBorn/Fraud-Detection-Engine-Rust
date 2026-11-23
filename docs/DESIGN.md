@@ -226,7 +226,7 @@ Odd behavior rule, money based metrics, running several engine instances, a moni
 
 ## 15. Open questions
 
-1. When Garnet is unreachable, does the engine approve or block?
+1. When Garnet is unreachable, the engine answers with status 503 and the payment system chooses whether to approve or block. (Solved for now)
 2. Is the analyst page served by the engine or built as a separate Next.js app?
 3. How do the machine learning score and the rules combine: a blend, or separate signals?
 4. The final field list for `TransactionEvent`.
