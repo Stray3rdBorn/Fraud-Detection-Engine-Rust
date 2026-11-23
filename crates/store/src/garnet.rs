@@ -10,7 +10,7 @@ use serde::{Serialize, de::DeserializeOwned};
 // seconds a device or IP record lives after its last write, 7 days, the same as the link window.
 const ENTITY_TTL_SECONDS: u64 = 604_800;
 // first byte of every stored value, raised when the layout of a stored type changes.
-const FORMAT_VERSION: u8 = 1;
+const FORMAT_VERSION: u8 = 2;
 
 // the Garnet version of the store, it speaks the Redis protocol.
 #[derive(Clone)]
