@@ -1,3 +1,5 @@
+// derive helpers that let the state be saved as bytes and read back.
+use serde::{Deserialize, Serialize};
 // the transaction type that gets recorded into the state, and the city table.
 use crate::{
     event::{AccountEvent, AccountEventKind, TransactionEvent},
@@ -14,7 +16,7 @@ const MAX_DEVICES: usize = 5;
 const LINK_CAP: usize = 50;
 
 // counts events per 5 minute slot, a slot starts again when time reaches it a second time.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Velocity {
     // each slot stores the id of the time slot it belongs to and the count seen in it.
     slots: [(i64, u32); SLOTS],
@@ -53,7 +55,7 @@ impl Velocity {
 }
 
 // running average and spread of a user's amounts, three numbers instead of every amount.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct AmountStats {
     // how many amounts have been recorded.
     count: u64,
@@ -107,7 +109,7 @@ impl AmountStats {
 }
 
 // devices a user has used before, capped in size.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct KnownDevices(Vec<String>);
 
 impl KnownDevices {
@@ -141,7 +143,7 @@ impl KnownDevices {
 }
 
 // the last known position of a user and when it was seen.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Place {
     // latitude and longitude in degrees.
     pub pos: (f64, f64),
@@ -150,7 +152,7 @@ pub struct Place {
 }
 
 // everything the engine remembers about one user between transactions.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct UserState {
     // time of the first transaction seen for this user, empty until then.
     pub first_seen: Option<i64>,
@@ -210,7 +212,7 @@ impl UserState {
 }
 
 // what is remembered about one device or one IP, shared by all accounts that use it.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct EntityState {
     // hashed ids of the accounts seen here with the time each was last seen, capped in size.
     accounts: Vec<(u64, i64)>,
@@ -298,7 +300,7 @@ impl EntityState {
 }
 
 // the device and the IP of one transaction.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Entities {
     // what is remembered about the device.
     pub device: EntityState,

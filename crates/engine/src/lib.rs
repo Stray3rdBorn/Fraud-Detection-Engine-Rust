@@ -17,4 +17,5 @@ mod state;
 pub use config::Config;
 pub use engine::Engine;
 pub use event::{AccountEvent, AccountEventKind, Decision, Outcome, TransactionEvent};
+pub use hash::id_hash;
 pub use state::{Entities, EntityState, UserState};
