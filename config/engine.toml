@@ -1,0 +1,51 @@
+# rule weights and thresholds, every value below is the default, delete a line to keep the default.
+# a misspelled name or a bad value stops the server at startup.
+# start the server with the variable ENGINE_CONFIG set to the path of this file.
+
+# a score at or above this goes to review, at or above the next one it is blocked.
+review_threshold = 40
+block_threshold = 80
+
+# velocity: transactions per hour.
+velocity_free = 5
+velocity_per_extra = 4
+velocity_max_weight = 40
+
+# amount anomaly: how far above the user's own average.
+amount_min_history = 5
+amount_cold_weight = 10
+amount_z_start = 3.0
+amount_per_z = 10.0
+amount_max_weight = 40
+amount_min_spread = 5.0
+
+# account age: seconds.
+account_age_window = 3600
+account_age_max_weight = 40
+
+# new device.
+new_device_weight = 20
+new_device_large_bonus = 20
+
+# impossible travel: kilometers per hour and kilometers.
+travel_max_kmh = 900.0
+travel_min_km = 100.0
+travel_weight = 60
+
+# account takeover.
+takeover_failed_logins = 3
+takeover_password_window = 86400
+takeover_min_signals = 2
+takeover_weight = 30
+takeover_per_extra = 15
+
+# blocklist and linked accounts: the window is 7 days in seconds.
+blocklist_weight = 100
+link_window = 604800
+device_free_accounts = 1
+device_per_account = 15
+device_max_weight = 60
+ip_free_accounts = 3
+ip_per_account = 3
+ip_max_weight = 20
+linked_blocked_weight = 30

@@ -1,5 +1,13 @@
+// lets the settings be read from a file.
+use serde::Deserialize;
+
+// largest weight any single setting may carry, keeps the sum of all weights far from overflowing.
+const MAX_WEIGHT: u32 = 10_000;
+
 // all weights and thresholds in one place, so tuning never touches the rules.
-#[derive(Debug, Clone)]
+// a file may set only some values, the rest keep their defaults, and a misspelled name is an error.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct Config {
     // a score at or above this sends the transaction to review.
     pub review_threshold: u32,
@@ -77,6 +85,90 @@ pub struct Config {
     pub ip_velocity_per_extra: u32,
     // highest weight the IP velocity can add.
     pub ip_velocity_max_weight: u32,
+}
+
+impl Config {
+    // checks that the values make sense, a bad file must stop the server before it decides anything.
+    pub fn validate(&self) -> Result<(), String> {
+        // every weight with its name, so one check covers them all.
+        let weights = [
+            ("velocity_per_extra", self.velocity_per_extra),
+            ("velocity_max_weight", self.velocity_max_weight),
+            ("amount_cold_weight", self.amount_cold_weight),
+            ("amount_max_weight", self.amount_max_weight),
+            ("account_age_max_weight", self.account_age_max_weight),
+            ("new_device_weight", self.new_device_weight),
+            ("new_device_large_bonus", self.new_device_large_bonus),
+            ("travel_weight", self.travel_weight),
+            ("takeover_weight", self.takeover_weight),
+            ("takeover_per_extra", self.takeover_per_extra),
+            ("blocklist_weight", self.blocklist_weight),
+            ("device_per_account", self.device_per_account),
+            ("device_max_weight", self.device_max_weight),
+            ("ip_per_account", self.ip_per_account),
+            ("ip_max_weight", self.ip_max_weight),
+            ("linked_blocked_weight", self.linked_blocked_weight),
+        ];
+        // no weight may be above the limit.
+        for (name, weight) in weights {
+            // report the first one that is too big.
+            if weight > MAX_WEIGHT {
+                return Err(format!("{name} must be at most {MAX_WEIGHT}"));
+            }
+        }
+        // numbers that must be above zero, a zero would divide by zero.
+        let positive = [
+            ("amount_min_spread", self.amount_min_spread),
+            ("travel_max_kmh", self.travel_max_kmh),
+        ];
+        // NaN and infinity fail this check too.
+        for (name, value) in positive {
+            // report the first bad one.
+            if !(value.is_finite() && value > 0.0) {
+                return Err(format!("{name} must be a number above 0"));
+            }
+        }
+        // numbers that may be zero but never negative.
+        let not_negative = [
+            ("amount_z_start", self.amount_z_start),
+            ("amount_per_z", self.amount_per_z),
+            ("travel_min_km", self.travel_min_km),
+        ];
+        // NaN and infinity fail this check too.
+        for (name, value) in not_negative {
+            // report the first bad one.
+            if !(value.is_finite() && value >= 0.0) {
+                return Err(format!("{name} must be a number of 0 or more"));
+            }
+        }
+        // time windows must have a length.
+        let windows = [
+            ("account_age_window", self.account_age_window),
+            ("link_window", self.link_window),
+            ("takeover_password_window", self.takeover_password_window),
+        ];
+        // a window of zero or less would never match anything.
+        for (name, seconds) in windows {
+            // report the first bad one.
+            if seconds <= 0 {
+                return Err(format!("{name} must be above 0"));
+            }
+        }
+        // review must come first, and a threshold of zero would review everything.
+        if self.review_threshold == 0 || self.review_threshold > self.block_threshold {
+            return Err("review_threshold must be above 0 and not above block_threshold".to_string());
+        }
+        // the standard deviation needs at least two amounts.
+        if self.amount_min_history < 2 {
+            return Err("amount_min_history must be at least 2".to_string());
+        }
+        // takeover needs several signals together, and only four exist.
+        if !(2..=4).contains(&self.takeover_min_signals) {
+            return Err("takeover_min_signals must be between 2 and 4".to_string());
+        }
+        // everything is fine.
+        Ok(())
+    }
 }
 
 // starting values, they are tuned later with the threshold sweep on the test data.
@@ -160,5 +252,46 @@ impl Default for Config {
             // the IP velocity never adds more than 15.
             ip_velocity_max_weight: 15,
         }
+    }
+}
+
+// tests for the settings.
+#[cfg(test)]
+mod tests {
+    // bring the settings into the tests.
+    use super::*;
+
+    // the defaults are valid, and each kind of bad value is caught.
+    #[test]
+    fn validate_accepts_defaults_and_rejects_bad_values() {
+        // the defaults pass.
+        assert!(Config::default().validate().is_ok());
+        // changes the default settings with the given edit and says whether validation fails.
+        let fails = |edit: fn(&mut Config)| {
+            // start from the defaults.
+            let mut config = Config::default();
+            // apply the edit.
+            edit(&mut config);
+            // the result of the check.
+            config.validate().is_err()
+        };
+        // block below review.
+        assert!(fails(|c| c.block_threshold = 10));
+        // review at zero.
+        assert!(fails(|c| c.review_threshold = 0));
+        // a spread floor of zero.
+        assert!(fails(|c| c.amount_min_spread = 0.0));
+        // a number that is not a number.
+        assert!(fails(|c| c.amount_min_spread = f64::NAN));
+        // a window of zero.
+        assert!(fails(|c| c.link_window = 0));
+        // a weight above the limit.
+        assert!(fails(|c| c.travel_weight = 10_001));
+        // too few signals.
+        assert!(fails(|c| c.takeover_min_signals = 1));
+        // too little history.
+        assert!(fails(|c| c.amount_min_history = 1));
+        // a negative minimum distance.
+        assert!(fails(|c| c.travel_min_km = -1.0));
     }
 }
