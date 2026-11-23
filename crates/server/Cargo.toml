@@ -7,4 +7,7 @@ edition = "2024"
 axum = "0.8.9"
 engine = { version = "0.1.0", path = "../engine" }
 store = { version = "0.1.0", path = "../store" }
-tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread", "net"] }
+tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread", "net", "sync"] }
+
+[dev-dependencies]
+tokio = { version = "1.54.1", features = ["time"] }
