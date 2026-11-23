@@ -164,6 +164,8 @@ Garnet holds a user's whole state together, so a decision costs two network call
 
 ## 9. API (initial)
 
+Every endpoint except `GET /health` needs the header `x-api-key`. Input is validated, bodies are limited to 4 KB, each request has a 2 second limit, and at most 1024 requests run at once.
+
 | Endpoint                      | Purpose                                    |
 | ----------------------------- | ------------------------------------------ |
 | `POST /v1/evaluate`           | Decide one transaction                     |
