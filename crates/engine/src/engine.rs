@@ -5,7 +5,8 @@ use crate::{
     hash::id_hash,
     rules::{
         AccountAgeRule, AccountTakeoverRule, AmountAnomalyRule, BlocklistRule, EntityRule,
-        ImpossibleTravelRule, LinkedAccountsRule, NewDeviceRule, Rule, VelocityRule, EntityVelocityRule,
+        EntityVelocityRule, ImpossibleTravelRule, LinkedAccountsRule, NewDeviceRule, Rule,
+        VelocityRule,
     },
     state::{Entities, UserState},
 };
@@ -33,7 +34,7 @@ impl Engine {
             Box::new(AccountTakeoverRule),
         ];
         // the rules that need the device and the IP, new ones are added here.
-               let entity_rules: Vec<Box<dyn EntityRule>> = vec![
+        let entity_rules: Vec<Box<dyn EntityRule>> = vec![
             Box::new(BlocklistRule),
             Box::new(LinkedAccountsRule),
             Box::new(EntityVelocityRule),
@@ -116,7 +117,7 @@ mod tests {
     use super::*;
     use crate::event::{AccountEvent, AccountEventKind, sample_event};
 
-        // many different accounts on one device within an hour raise the score through device velocity.
+    // many different accounts on one device within an hour raise the score through device velocity.
     #[test]
     fn a_burst_on_one_device_is_flagged_by_entity_velocity() {
         // default engine.
@@ -139,7 +140,12 @@ mod tests {
             last = Some(decision);
         }
         // the last decision mentions the entity velocity.
-        assert!(last.unwrap().reasons.iter().any(|r| r.contains("entity velocity")));
+        assert!(
+            last.unwrap()
+                .reasons
+                .iter()
+                .any(|r| r.contains("entity velocity"))
+        );
     }
 
     // an honest user with history gets allowed.

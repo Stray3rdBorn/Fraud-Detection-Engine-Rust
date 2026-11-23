@@ -65,7 +65,7 @@ pub struct Config {
     pub ip_max_weight: u32,
     // extra weight when a blocked account used the same device or IP inside the window.
     pub linked_blocked_weight: u32,
-        // transactions per hour on one device that cost no weight, a shared family device is normal.
+    // transactions per hour on one device that cost no weight, a shared family device is normal.
     pub device_velocity_free: u32,
     // weight added for every further transaction on the same device in the hour.
     pub device_velocity_per_extra: u32,
@@ -147,7 +147,7 @@ impl Default for Config {
             ip_max_weight: 20,
             // a link to a blocked account adds 30.
             linked_blocked_weight: 30,
-                        // up to 10 transactions an hour on a device are normal.
+            // up to 10 transactions an hour on a device are normal.
             device_velocity_free: 10,
             // every further transaction on a device adds 3.
             device_velocity_per_extra: 3,

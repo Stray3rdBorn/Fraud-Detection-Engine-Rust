@@ -612,7 +612,7 @@ mod tests {
         assert!(hit.reason.contains("blocked account"));
     }
 
-        // device and IP velocity count transactions of all accounts, with the IP softer than the device.
+    // device and IP velocity count transactions of all accounts, with the IP softer than the device.
     #[test]
     fn entity_velocity_rule_counts_all_accounts_and_weights_device_strong() {
         // default settings.
@@ -636,7 +636,10 @@ mod tests {
         }
         // the device weight is 9.
         assert_eq!(
-            EntityVelocityRule.check(&event, &user, &busy, &config).unwrap().weight,
+            EntityVelocityRule
+                .check(&event, &user, &busy, &config)
+                .unwrap()
+                .weight,
             9
         );
         // an IP that already saw 24 transactions, so this is the 25th, five above the free twenty, at 1.
@@ -648,7 +651,10 @@ mod tests {
         }
         // the IP weight is 5.
         assert_eq!(
-            EntityVelocityRule.check(&event, &user, &crowded, &config).unwrap().weight,
+            EntityVelocityRule
+                .check(&event, &user, &crowded, &config)
+                .unwrap()
+                .weight,
             5
         );
         // a huge count stops at the caps, 30 for the device and 15 for the IP.
@@ -662,7 +668,10 @@ mod tests {
         }
         // both caps together.
         assert_eq!(
-            EntityVelocityRule.check(&event, &user, &flood, &config).unwrap().weight,
+            EntityVelocityRule
+                .check(&event, &user, &flood, &config)
+                .unwrap()
+                .weight,
             45
         );
         // an hour later the old transactions are forgotten.
