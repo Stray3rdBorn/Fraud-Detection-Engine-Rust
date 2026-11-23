@@ -218,6 +218,8 @@ pub struct EntityState {
     pub blocked_until: Option<i64>,
     // last time an account that was blocked used this device or IP.
     pub blocked_account_at: Option<i64>,
+        // transactions per hour on this device or IP, whichever account made them.
+    pub velocity: Velocity,
 }
 
 impl EntityState {
@@ -258,6 +260,9 @@ impl EntityState {
 
     // records that an account used this device or IP.
     pub fn record(&mut self, user: u64, now: i64, user_blocked: bool) {
+
+        // count this transaction for the device or IP itself.
+        self.velocity.record(now);
         // an account that is already known only gets a newer time, an older time never replaces a newer one.
         if let Some(entry) = self
             .accounts

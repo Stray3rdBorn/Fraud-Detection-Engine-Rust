@@ -344,6 +344,48 @@ impl EntityRule for LinkedAccountsRule {
     }
 }
 
+// flags a device or an IP that is used for many transactions within one hour, whichever accounts they come from.
+pub struct EntityVelocityRule;
+
+impl EntityRule for EntityVelocityRule {
+    fn check(
+        &self,
+        event: &TransactionEvent,
+        _user: &UserState,
+        entities: &Entities,
+        config: &Config,
+    ) -> Option<Hit> {
+        // earlier transactions in the last hour plus this one, on the device and on the IP.
+        let on_device = entities.device.velocity.count(event.timestamp) + 1;
+        // the same count for the IP.
+        let on_ip = entities.ip.velocity.count(event.timestamp) + 1;
+        // weight grows with every transaction above the free amount and stops at the cap.
+        let device_weight = on_device
+            .saturating_sub(config.device_velocity_free)
+            .saturating_mul(config.device_velocity_per_extra)
+            .min(config.device_velocity_max_weight);
+        // the IP uses the same formula with its own, softer settings.
+        let ip_weight = on_ip
+            .saturating_sub(config.ip_velocity_free)
+            .saturating_mul(config.ip_velocity_per_extra)
+            .min(config.ip_velocity_max_weight);
+        // both parts together.
+        let weight = device_weight + ip_weight;
+        // normal traffic on both means nothing fires.
+        if weight == 0 {
+            // normal activity.
+            return None;
+        }
+        // report both counts as the reason.
+        Some(Hit {
+            weight,
+            reason: format!(
+                "entity velocity: {on_device} on this device, {on_ip} on this IP in the last hour"
+            ),
+        })
+    }
+}
+
 // tests for the rules.
 #[cfg(test)]
 mod tests {
@@ -568,6 +610,67 @@ mod tests {
         assert_eq!(hit.weight, 30);
         // the reason mentions the blocked account.
         assert!(hit.reason.contains("blocked account"));
+    }
+
+        // device and IP velocity count transactions of all accounts, with the IP softer than the device.
+    #[test]
+    fn entity_velocity_rule_counts_all_accounts_and_weights_device_strong() {
+        // default settings.
+        let config = Config::default();
+        // a user without history, the entities carry all the information.
+        let user = UserState::default();
+        // the transaction is at time 100.
+        let event = sample_event(100, 10.0);
+        // nothing recorded gives nothing.
+        assert!(
+            EntityVelocityRule
+                .check(&event, &user, &Entities::default(), &config)
+                .is_none()
+        );
+        // a device that already saw 12 transactions this hour, so this is the 13th, three above the free ten, at 3.
+        let mut busy = Entities::default();
+        // record them.
+        for _ in 0..12 {
+            // one transaction.
+            busy.device.velocity.record(100);
+        }
+        // the device weight is 9.
+        assert_eq!(
+            EntityVelocityRule.check(&event, &user, &busy, &config).unwrap().weight,
+            9
+        );
+        // an IP that already saw 24 transactions, so this is the 25th, five above the free twenty, at 1.
+        let mut crowded = Entities::default();
+        // record them.
+        for _ in 0..24 {
+            // one transaction.
+            crowded.ip.velocity.record(100);
+        }
+        // the IP weight is 5.
+        assert_eq!(
+            EntityVelocityRule.check(&event, &user, &crowded, &config).unwrap().weight,
+            5
+        );
+        // a huge count stops at the caps, 30 for the device and 15 for the IP.
+        let mut flood = Entities::default();
+        // record them.
+        for _ in 0..500 {
+            // one transaction on both.
+            flood.device.velocity.record(100);
+            // the same on the IP.
+            flood.ip.velocity.record(100);
+        }
+        // both caps together.
+        assert_eq!(
+            EntityVelocityRule.check(&event, &user, &flood, &config).unwrap().weight,
+            45
+        );
+        // an hour later the old transactions are forgotten.
+        assert!(
+            EntityVelocityRule
+                .check(&sample_event(100 + 3_600, 10.0), &user, &flood, &config)
+                .is_none()
+        );
     }
 
     // builds one piece of account activity for tests.

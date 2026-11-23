@@ -5,7 +5,7 @@ use crate::{
     hash::id_hash,
     rules::{
         AccountAgeRule, AccountTakeoverRule, AmountAnomalyRule, BlocklistRule, EntityRule,
-        ImpossibleTravelRule, LinkedAccountsRule, NewDeviceRule, Rule, VelocityRule,
+        ImpossibleTravelRule, LinkedAccountsRule, NewDeviceRule, Rule, VelocityRule, EntityVelocityRule,
     },
     state::{Entities, UserState},
 };
@@ -33,8 +33,11 @@ impl Engine {
             Box::new(AccountTakeoverRule),
         ];
         // the rules that need the device and the IP, new ones are added here.
-        let entity_rules: Vec<Box<dyn EntityRule>> =
-            vec![Box::new(BlocklistRule), Box::new(LinkedAccountsRule)];
+               let entity_rules: Vec<Box<dyn EntityRule>> = vec![
+            Box::new(BlocklistRule),
+            Box::new(LinkedAccountsRule),
+            Box::new(EntityVelocityRule),
+        ];
         // keep the settings and the rules together.
         Engine {
             config,
@@ -112,6 +115,32 @@ mod tests {
     // bring the engine and helpers into the tests.
     use super::*;
     use crate::event::{AccountEvent, AccountEventKind, sample_event};
+
+        // many different accounts on one device within an hour raise the score through device velocity.
+    #[test]
+    fn a_burst_on_one_device_is_flagged_by_entity_velocity() {
+        // default engine.
+        let engine = Engine::new(Config::default());
+        // nothing is known at the start.
+        let mut entities = Entities::default();
+        // the decision of the last transaction.
+        let mut last = None;
+        // 15 transactions in one minute, each from a new account on the same device and IP.
+        for i in 0..15 {
+            // a transaction from account number i.
+            let mut event = sample_event(1_000 + i, 10.0);
+            // a new account each time.
+            event.user_id = format!("u{i}");
+            // run it with a fresh user state and keep the updated entities.
+            let (decision, _, next) = engine.evaluate(&event, &UserState::default(), &entities);
+            // carry the entities forward.
+            entities = next;
+            // remember the decision.
+            last = Some(decision);
+        }
+        // the last decision mentions the entity velocity.
+        assert!(last.unwrap().reasons.iter().any(|r| r.contains("entity velocity")));
+    }
 
     // an honest user with history gets allowed.
     #[test]
