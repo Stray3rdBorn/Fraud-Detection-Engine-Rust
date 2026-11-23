@@ -5,3 +5,10 @@ edition = "2024"
 
 [dependencies]
 engine = { version = "0.1.0", path = "../engine" }
+postcard = { version = "1.2.0", features = ["use-std"] }
+serde = "1.0.229"
+redis = { version = "1.8.2", features = ["tokio-comp", "connection-manager"] }
+thiserror = "2.0.21"
+
+[dev-dependencies]
+tokio = { version = "1.54.1", features = ["macros", "rt"] }
