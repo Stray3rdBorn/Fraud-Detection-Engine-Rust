@@ -108,6 +108,10 @@ impl Config {
             ("ip_per_account", self.ip_per_account),
             ("ip_max_weight", self.ip_max_weight),
             ("linked_blocked_weight", self.linked_blocked_weight),
+            ("device_velocity_per_extra", self.device_velocity_per_extra),
+            ("device_velocity_max_weight", self.device_velocity_max_weight),
+            ("ip_velocity_per_extra", self.ip_velocity_per_extra),
+            ("ip_velocity_max_weight", self.ip_velocity_max_weight),
         ];
         // no weight may be above the limit.
         for (name, weight) in weights {
