@@ -49,3 +49,11 @@ ip_free_accounts = 3
 ip_per_account = 3
 ip_max_weight = 20
 linked_blocked_weight = 30
+
+# entity velocity: transactions per hour on one device or one IP, whichever accounts make them.
+device_velocity_free = 10
+device_velocity_per_extra = 3
+device_velocity_max_weight = 30
+ip_velocity_free = 20
+ip_velocity_per_extra = 1
+ip_velocity_max_weight = 15
