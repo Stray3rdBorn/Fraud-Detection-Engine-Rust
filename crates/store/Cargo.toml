@@ -9,6 +9,8 @@ postcard = { version = "1.2.0", features = ["use-std"] }
 serde = "1.0.229"
 redis = { version = "1.8.2", features = ["tokio-comp", "connection-manager"] }
 thiserror = "2.0.21"
+sqlx = { version = "0.9.1", default-features = false, features = ["runtime-tokio", "postgres"] }
+serde_json = "1.0.154"
 
 [dev-dependencies]
 tokio = { version = "1.54.1", features = ["macros", "rt"] }
