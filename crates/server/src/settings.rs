@@ -22,6 +22,8 @@ pub struct Settings {
     pub bind: SocketAddr,
     // the Garnet address, empty means the in memory store is used.
     pub garnet_url: Option<String>,
+    // the postgresql address
+    pub database_url: Option<String>,
     // the path of the rule settings file, empty means the defaults are used.
     pub engine_config: Option<String>,
     // allowed difference between a transaction time and the server clock, empty means no check.
@@ -76,6 +78,7 @@ impl Settings {
             api_key,
             bind,
             garnet_url: get("GARNET_URL"),
+            database_url: get("DATABASE_URL"),
             engine_config: get("ENGINE_CONFIG"),
             max_clock_skew,
             request_timeout: REQUEST_TIMEOUT,
@@ -196,5 +199,7 @@ mod tests {
             ]))
             .is_err()
         );
+                // no Postgres address means no value.
+        assert!(settings.database_url.is_none());
     }
 }

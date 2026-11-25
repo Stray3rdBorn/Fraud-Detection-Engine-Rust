@@ -7,6 +7,7 @@ use axum::{
 use store::StoreError;
 
 // everything that can make a request fail, each one becomes a status code and a fixed message.
+#[derive(Debug)]
 pub enum ApiError {
     // the input was wrong, the message names the field and never repeats what the caller sent.
     Invalid(&'static str),
