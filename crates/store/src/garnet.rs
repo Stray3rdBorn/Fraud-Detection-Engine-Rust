@@ -33,6 +33,13 @@ impl GarnetStore {
     }
 }
 
+// turns a record into bytes, the version byte comes first and the compact record follows.
+fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>, StoreError> {
+    // start the byte list with the version and let the record append itself.
+    Ok(postcard::to_extend(value, vec![FORMAT_VERSION])?)
+}
+
+
 // turns stored bytes back into a record, a wrong version or damaged bytes are errors.
 fn decode_bytes<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, StoreError> {
     // split the version byte from the rest.
@@ -159,7 +166,7 @@ impl Store for GarnetStore {
 mod tests {
     // bring the store and the shared test records into the tests.
     use super::*;
-    use crate::testing::busy_records;
+    use crate::testing::{busy_decision, busy_records};
 
     // a record survives encoding and decoding, and a missing value is an empty record.
     #[test]
@@ -208,6 +215,7 @@ mod tests {
         let url = std::env::var("GARNET_URL").expect("set GARNET_URL");
         // connect.
         let store = GarnetStore::connect(&url).await.unwrap();
+        let id = format!("garnet-test-{}", std::process::id());
                // all four ids are the same text, the key prefixes keep them apart.
         let keys = Keys {
             user_id: &id,
