@@ -2,7 +2,7 @@
 use serde::{Deserialize, Serialize};
 
 // one transaction as sent by the payment system, working fields only.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct TransactionEvent {
     // unique id of this transaction.
     pub event_id: String,
@@ -44,7 +44,7 @@ pub struct AccountEvent {
 }
 
 // the three possible results of a decision, written in lowercase in JSON.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Outcome {
     // the transaction goes through.
@@ -55,8 +55,20 @@ pub enum Outcome {
     Block,
 }
 
+impl Outcome {
+    // the same word that the JSON answer uses, also the text stored in the database.
+    pub fn as_str(self) -> &'static str {
+        // one word per outcome.
+        match self {
+            Outcome::Allow => "Allow",
+            Outcome::Review => "Review",
+            Outcome::Block => "Block",
+        }
+    }
+}
+
 // the full answer for one transaction.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Decision {
     // id of the transaction this decision belongs to.
     pub event_id: String,
