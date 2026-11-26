@@ -47,6 +47,12 @@ impl Engine {
         }
     }
 
+    // the settings, the server needs the verdict durations.
+    pub fn config(&self) -> &Config {
+        // a borrow of the settings.
+        &self.config
+    }
+
     // decides one transaction and returns the decision plus the updated user, device and IP records.
     pub fn evaluate(
         &self,
@@ -67,8 +73,26 @@ impl Engine {
         // all hits in one list.
         let hits: Vec<_> = user_hits.chain(entity_hits).collect();
         // the risk score is the sum of all weights.
-        let score: u32 = hits.iter().map(|hit| hit.weight).sum();
-        // the thresholds turn the score into an outcome.
+        let mut score: u32 = hits.iter().map(|hit| hit.weight).sum();
+        // every reason carries its weight.
+        let mut reasons: Vec<String> = hits
+            .iter()
+            .map(|hit| format!("{} (+{})", hit.reason, hit.weight))
+            .collect();
+        // an account that an analyst cleared gets a lower score, but never while anything is blocked.
+        let blocked = state.is_blocked(event.timestamp)
+            || entities.device.is_blocked(event.timestamp)
+            || entities.ip.is_blocked(event.timestamp);
+        // the allowlist only lowers the score.
+        if state.is_allowed(event.timestamp) && !blocked && score > 0 {
+            // the score cannot go below zero.
+            let cut = self.config.allowlist_discount.min(score);
+            // lower it.
+            score -= cut;
+            // say so in the reasons.
+            reasons.push(format!("allowlist: cleared by an analyst earlier (-{cut})"));
+        }
+        // the thresholds turn the adjusted score into an outcome.
         let outcome = if score >= self.config.block_threshold {
             // very risky.
             Outcome::Block
@@ -79,11 +103,6 @@ impl Engine {
             // normal.
             Outcome::Allow
         };
-        // every reason carries its weight.
-        let reasons = hits
-            .iter()
-            .map(|hit| format!("{} (+{})", hit.reason, hit.weight))
-            .collect();
         // the new user state is a copy of the old one with this transaction added.
         let mut next = state.clone();
         // record the transaction.
@@ -167,6 +186,55 @@ mod tests {
         assert_eq!(decision.score, 0);
         // the outcome is allow.
         assert!(matches!(decision.outcome, Outcome::Allow));
+    }
+
+    // an active allowlist entry lowers a nonzero score before the outcome is selected.
+    #[test]
+    fn allowlist_discount_lowers_score_and_outcome() {
+        // set thresholds so the discount changes a review into an allow.
+        let mut config = Config::default();
+        config.review_threshold = 5;
+        config.block_threshold = 10;
+        config.allowlist_discount = 8;
+        let engine = Engine::new(config);
+        // the account has been cleared by an analyst.
+        let mut state = UserState::default();
+        state.allowed_until = Some(200);
+        // no history gives a score of 10 before the discount.
+        let (decision, _, _) =
+            engine.evaluate(&sample_event(100, 500.0), &state, &Entities::default());
+        // the discount is applied before threshold evaluation.
+        assert_eq!(decision.score, 2);
+        assert_eq!(decision.outcome, Outcome::Allow);
+        assert!(
+            decision
+                .reasons
+                .iter()
+                .any(|reason| reason == "allowlist: cleared by an analyst earlier (-8)")
+        );
+    }
+
+    // an active block prevents the allowlist discount from lowering the score.
+    #[test]
+    fn allowlist_discount_does_not_apply_while_blocked() {
+        // default engine.
+        let engine = Engine::new(Config::default());
+        // the account is allowlisted but its device is blocked.
+        let mut state = UserState::default();
+        state.allowed_until = Some(200);
+        let mut entities = Entities::default();
+        entities.device.blocked_until = Some(200);
+        // evaluate before either entry expires.
+        let (decision, _, _) = engine.evaluate(&sample_event(100, 500.0), &state, &entities);
+        // the full blocklist score remains.
+        assert_eq!(decision.score, 110);
+        assert_eq!(decision.outcome, Outcome::Block);
+        assert!(
+            !decision
+                .reasons
+                .iter()
+                .any(|reason| reason.starts_with("allowlist:"))
+        );
     }
 
     // a burst, a spike and a fresh account together are blocked.
@@ -297,5 +365,42 @@ mod tests {
         assert_eq!(next.amounts.count(), 1);
         // the first seen time was set.
         assert_eq!(next.first_seen, Some(5_000));
+    }
+
+    // a false alarm verdict lowers the score, but never while a block is active.
+    #[test]
+    fn allowlist_lowers_the_score_but_never_overrides_a_block() {
+        // default engine.
+        let engine = Engine::new(Config::default());
+        // a brand new user scores for the missing history and the account age.
+        let plain = engine.evaluate(
+            &sample_event(100, 10.0),
+            &UserState::default(),
+            &Entities::default(),
+        );
+        // the same user after a false alarm verdict.
+        let cleared = UserState {
+            allowed_until: Some(1_000),
+            ..UserState::default()
+        };
+        // the cleared score is lower by the discount, down to zero at the lowest.
+        let after = engine.evaluate(&sample_event(100, 10.0), &cleared, &Entities::default());
+        // the difference.
+        assert_eq!(
+            plain.0.score - after.0.score,
+            plain.0.score.min(engine.config().allowlist_discount)
+        );
+        // the reason is listed.
+        assert!(after.0.reasons.iter().any(|r| r.starts_with("allowlist")));
+        // the same cleared user on a blocked device gets no discount.
+        let mut blocked = Entities::default();
+        // block the device.
+        blocked.device.blocked_until = Some(1_000);
+        // evaluate.
+        let hit = engine.evaluate(&sample_event(100, 10.0), &cleared, &blocked);
+        // the block weight is there and no allowlist line.
+        assert!(hit.0.score >= 100);
+        // no discount was applied.
+        assert!(!hit.0.reasons.iter().any(|r| r.starts_with("allowlist")));
     }
 }

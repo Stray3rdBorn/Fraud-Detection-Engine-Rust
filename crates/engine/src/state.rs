@@ -170,6 +170,8 @@ pub struct UserState {
     pub password_changed_at: Option<i64>,
     // time until which this account is blocked, empty when it is not.
     pub blocked_until: Option<i64>,
+    // time until which an analyst's false alarm verdict lowers this account's score, empty when there is none.
+    pub allowed_until: Option<i64>,
 }
 
 impl UserState {
@@ -197,6 +199,12 @@ impl UserState {
     pub fn is_blocked(&self, now: i64) -> bool {
         // a block counts until its end time.
         self.blocked_until.is_some_and(|until| until > now)
+    }
+
+    // true when an analyst's false alarm verdict still lowers the score at the given time.
+    pub fn is_allowed(&self, now: i64) -> bool {
+        // an allowlist entry counts until its end time.
+        self.allowed_until.is_some_and(|until| until > now)
     }
 
     // adds one piece of account activity to the remembered state.

@@ -50,6 +50,11 @@ ip_per_account = 3
 ip_max_weight = 20
 linked_blocked_weight = 30
 
+# analyst verdicts: seconds of a block after a fraud verdict, seconds and points of a false alarm verdict.
+verdict_block_seconds = 2592000
+verdict_allow_seconds = 604800
+allowlist_discount = 30
+
 # entity velocity: transactions per hour on one device or one IP, whichever accounts make them.
 device_velocity_free = 10
 device_velocity_per_extra = 3

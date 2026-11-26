@@ -73,6 +73,12 @@ pub struct Config {
     pub ip_max_weight: u32,
     // extra weight when a blocked account used the same device or IP inside the window.
     pub linked_blocked_weight: u32,
+    // seconds an account, device and IP stay blocked after a fraud verdict, 30 days.
+    pub verdict_block_seconds: i64,
+    // seconds a false alarm verdict lowers the account's score, 7 days.
+    pub verdict_allow_seconds: i64,
+    // points a false alarm verdict removes from the score, never applied while a block is active.
+    pub allowlist_discount: u32,
     // transactions per hour on one device that cost no weight, a shared family device is normal.
     pub device_velocity_free: u32,
     // weight added for every further transaction on the same device in the hour.
@@ -108,6 +114,7 @@ impl Config {
             ("ip_per_account", self.ip_per_account),
             ("ip_max_weight", self.ip_max_weight),
             ("linked_blocked_weight", self.linked_blocked_weight),
+            ("allowlist_discount", self.allowlist_discount),
             ("device_velocity_per_extra", self.device_velocity_per_extra),
             (
                 "device_velocity_max_weight",
@@ -153,6 +160,8 @@ impl Config {
             ("account_age_window", self.account_age_window),
             ("link_window", self.link_window),
             ("takeover_password_window", self.takeover_password_window),
+            ("verdict_block_seconds", self.verdict_block_seconds),
+            ("verdict_allow_seconds", self.verdict_allow_seconds),
         ];
         // a window of zero or less would never match anything.
         for (name, seconds) in windows {
@@ -248,6 +257,12 @@ impl Default for Config {
             ip_max_weight: 20,
             // a link to a blocked account adds 30.
             linked_blocked_weight: 30,
+            // a fraud verdict blocks for 30 days.
+            verdict_block_seconds: 2_592_000,
+            // a false alarm verdict lowers the score for 7 days.
+            verdict_allow_seconds: 604_800,
+            // and removes 30 points.
+            allowlist_discount: 30,
             // up to 10 transactions an hour on a device are normal.
             device_velocity_free: 10,
             // every further transaction on a device adds 3.
@@ -302,5 +317,7 @@ mod tests {
         assert!(fails(|c| c.amount_min_history = 1));
         // a negative minimum distance.
         assert!(fails(|c| c.travel_min_km = -1.0));
+        // a block that lasts no time.
+        assert!(fails(|c| c.verdict_block_seconds = 0));
     }
 }
