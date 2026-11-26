@@ -15,6 +15,8 @@ pub enum ApiError {
     Unauthorized,
     // too many requests are running at once.
     Busy,
+    // the case does not exist or already has a verdict.
+    NotFound,
     // the store failed or the request took too long.
     Unavailable,
 }
@@ -25,6 +27,7 @@ impl IntoResponse for ApiError {
         let (status, message) = match self {
             ApiError::Invalid(message) => (StatusCode::UNPROCESSABLE_ENTITY, message),
             ApiError::Unauthorized => (StatusCode::UNAUTHORIZED, "Missing or wrong API key."),
+            ApiError::NotFound => (StatusCode::NOT_FOUND, "case not found or already closed"),
             ApiError::Busy => (
                 StatusCode::SERVICE_UNAVAILABLE,
                 "The service is busy, try again.",

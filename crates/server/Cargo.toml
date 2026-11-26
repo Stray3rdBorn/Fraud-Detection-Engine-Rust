@@ -9,3 +9,4 @@ engine = { version = "0.1.0", path = "../engine" }
 store = { version = "0.1.0", path = "../store" }
 tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread", "net", "sync", "time"] }
 toml = "1.2.2"
+serde = { version = "1.0.229", features = ["derive"] }

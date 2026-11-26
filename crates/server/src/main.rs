@@ -41,6 +41,8 @@ mod settings;
 mod validate;
 // the queue and the task that write decisions to Postgres.
 mod recorder;
+// the cases list and the verdicts.
+mod cases;
 
 // largest request body accepted, in bytes, a real transaction is well under one kilobyte.
 const MAX_BODY_BYTES: usize = 4096;
@@ -57,6 +59,8 @@ struct AppState<S> {
     permits: Semaphore,
     // the decision log, empty when no Postgres address is set.
     recorder: Option<Recorder>,
+        // the database for cases and verdicts, empty when no Postgres address is set.
+    db: Option<Postgres>,
     // the startup settings, including the API key.
     settings: Settings,
 }
@@ -178,7 +182,10 @@ fn router<S: Store>(
     settings: Settings,
     config: Config,
     recorder: Option<Recorder>,
+    db: Option<Postgres>,
 ) -> Router {
+    // the case routes exist only when a database is configured.
+    let has_db = db.is_some();
     // the places for running requests, counted before the settings move into the state.
     let permits = Semaphore::new(settings.max_in_flight);
     // the state is created once and shared through an Arc.
@@ -188,14 +195,25 @@ fn router<S: Store>(
         locks: KeyLocks::new(),
         permits,
         recorder,
+        db,
         settings,
     });
     // the routes that need the API key.
-    let protected = Router::new()
+        let mut protected = Router::new()
         // POST /v1/evaluate decides one transaction.
         .route("/v1/evaluate", post(evaluate_handler::<S>))
         // POST /v1/account-events records a failed login or a password change.
-        .route("/v1/account-events", post(account_event_handler::<S>))
+        .route("/v1/account-events", post(account_event_handler::<S>));
+    // the analyst routes, they need the database.
+    if has_db {
+        // GET /v1/cases lists open cases.
+        protected = protected
+            .route("/v1/cases", get(cases::list::<S>))
+            // POST /v1/cases/{case_id}/verdict marks a case as fraud or a false alarm.
+            .route("/v1/cases/{case_id}/verdict", post(cases::verdict::<S>));
+    }
+    // the layers apply to every route above.
+    let protected = protected
         // bodies above the limit are refused with status 413.
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
         // the key check runs first, so a wrong key never reaches the body or the handler.
@@ -233,26 +251,27 @@ async fn main() {
         None => println!("rule settings: defaults"),
     }
     // the decision log, connect once at startup, a wrong address or password stops the server right away.
-    let recorder = match &settings.database_url {
+        // the database, connect once at startup, a wrong address or password stops the server right away.
+    let db = match &settings.database_url {
         // the address can hold a password and is never printed.
         Some(url) => {
             // tell the operator.
-            println!("decision log: Postgres");
-            // connect, create the tables and start the writing task.
-            Some(Recorder::start(
-                Postgres::connect(url).await.unwrap_or_else(|error| {
-                    fail(&format!("could not connect to Postgres: {error}"))
-                }),
-            ))
+            println!("database: Postgres, decisions, cases and verdicts are stored");
+            // connect and create the tables.
+            Some(Postgres::connect(url).await.unwrap_or_else(|error| {
+                fail(&format!("could not connect to Postgres: {error}"))
+            }))
         }
-        // no address means no log.
+        // no address means no log and no case routes.
         None => {
             // tell the operator.
-            println!("decision log: off, decisions and cases are not stored");
-            // nothing to feed.
+            println!("database: off, decisions, cases and verdicts are not stored");
+            // nothing to connect.
             None
         }
     };
+    // the writing task for the decision log, a clone of the database handle shares the same connections.
+    let recorder = db.clone().map(Recorder::start);
     // the address and the store address are needed after the settings move into the router.
     let bind = settings.bind;
     // the Garnet address can hold a password and is never printed.
@@ -271,6 +290,7 @@ async fn main() {
                 settings,
                 config,
                 recorder,
+                db
             )
         }
         // no address means development mode.
@@ -278,7 +298,7 @@ async fn main() {
             // tell the operator which store is in use.
             println!("store: in memory, records are lost when the server stops");
             // build the router around the in memory store.
-            router(InMemoryStore::default(), settings, config, recorder)
+            router(InMemoryStore::default(), settings, config, recorder, db)
         }
     };
     // listen on the configured address.
@@ -291,21 +311,22 @@ async fn main() {
     axum::serve(listener, app).await.unwrap();
 }
 
-// tests for the decision flow.
+// helpers shared by the tests of this crate.
 #[cfg(test)]
-mod tests {
-    // bring the flow and its types into the tests.
+pub(crate) mod testing {
+    // bring the app types into the helpers.
     use super::*;
 
-    // an app with the in memory store and no decision log.
-    fn app() -> AppState<InMemoryStore> {
-        // every field is filled, the settings values do not matter for these tests.
+    // an app with the in memory store and no database.
+    pub(crate) fn app() -> AppState<InMemoryStore> {
+        // every field is filled, the settings values do not matter for the tests.
         AppState {
             store: InMemoryStore::default(),
             engine: Engine::new(Config::default()),
             locks: KeyLocks::new(),
             permits: Semaphore::new(1),
             recorder: None,
+            db: None,
             settings: Settings {
                 api_key: "k".repeat(16),
                 bind: "127.0.0.1:0".parse().unwrap(),
@@ -320,7 +341,7 @@ mod tests {
     }
 
     // a transaction with the given event id.
-    fn event(event_id: &str) -> TransactionEvent {
+    pub(crate) fn event(event_id: &str) -> TransactionEvent {
         // every field filled with a normal value.
         TransactionEvent {
             event_id: event_id.to_string(),
@@ -333,6 +354,14 @@ mod tests {
             city: None,
         }
     }
+}
+
+// tests for the decision flow.
+#[cfg(test)]
+mod tests {
+    // bring the flow and the shared helpers into the tests.
+    use super::*;
+    use testing::{app, event};
 
     // a repeated event id gets the first decision back and counts only once.
     #[tokio::test]

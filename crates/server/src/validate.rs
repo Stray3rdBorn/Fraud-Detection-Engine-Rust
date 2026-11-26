@@ -7,6 +7,8 @@ use std::net::IpAddr;
 
 // longest id accepted, in bytes.
 const MAX_ID_LEN: usize = 128;
+// longest analyst note accepted, in bytes.
+const MAX_NOTE_LEN: usize = 500;
 // longest city name accepted, in bytes.
 const MAX_CITY_LEN: usize = 64;
 // largest amount accepted, far above any real payment, keeps the statistics sane.
@@ -111,6 +113,21 @@ pub fn account(event: &AccountEvent, now: i64, max_skew: Option<i64>) -> Result<
     )?;
     // the time.
     time(event.timestamp, now, max_skew)
+}
+
+// checks the optional note of a verdict, a missing note is fine.
+pub fn note(note: Option<&str>) -> Result<(), ApiError> {
+    // only a note that is present is checked.
+    if let Some(note) = note {
+        // same rules as the other text fields.
+        text(
+            note,
+            MAX_NOTE_LEN,
+            "note must be 1 to 500 characters without control characters",
+        )?;
+    }
+    // fine.
+    Ok(())
 }
 
 // tests for the checks.
@@ -230,5 +247,20 @@ mod tests {
         };
         // it is refused.
         assert!(account(&late, NOW, Some(300)).is_err());
+    }
+
+        // a note is optional, but when present it must be short text.
+    #[test]
+    fn a_note_is_checked() {
+        // no note.
+        assert!(note(None).is_ok());
+        // a normal note.
+        assert!(note(Some("same card used on three devices")).is_ok());
+        // an empty note.
+        assert!(note(Some("")).is_err());
+        // a very long note.
+        assert!(note(Some(&"x".repeat(501))).is_err());
+        // a note with a line break.
+        assert!(note(Some("a\nb")).is_err());
     }
 }
