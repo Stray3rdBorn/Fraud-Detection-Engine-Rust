@@ -13,7 +13,7 @@ mod pg;
 // make both versions available as store::Name.
 pub use garnet::GarnetStore;
 pub use memory::InMemoryStore;
-pub use pg::{DecisionRecord, Postgres};
+pub use pg::{CaseRow, CaseTarget, DecisionRecord, Postgres};
 
 // everything that can go wrong when a store is used.
 #[derive(Debug, thiserror::Error)]
@@ -91,6 +91,13 @@ pub trait Store: Send + Sync + 'static {
         &self,
         keys: &Keys<'_>,
     ) -> impl Future<Output = Result<(UserState, Entities, Option<Decision>), StoreError>> + Send;
+    // save the user, device and IP records alone, used when a verdict changes a block or an allowlist entry.
+    fn update(
+        &self,
+        keys: &Keys<'_>,
+        state: UserState,
+        entities: Entities,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send;
     // save everything one transaction changed, including its decision, all or nothing.
     fn save(
         &self,

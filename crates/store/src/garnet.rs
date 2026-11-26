@@ -1,11 +1,13 @@
 // the storage contract, the error type and the key helpers of the crate.
 use crate::{Keys, Store, StoreError, device_key, event_key, ip_key, user_key};
 // the state types the store keeps.
-use engine::{Decision, Entities, UserState};
+use engine::{Decision, Entities, EntityState, UserState};
 // connection that is shared by all requests and reconnects by itself.
 use redis::aio::ConnectionManager;
 // serde traits that turn records into bytes and back.
 use serde::{Serialize, de::DeserializeOwned};
+// the clock, used to find how long a block still lasts.
+use std::time::{SystemTime, UNIX_EPOCH};
 
 // seconds a device or IP record lives after its last write, 7 days, the same as the link window.
 const ENTITY_TTL_SECONDS: u64 = 604_800;
@@ -14,11 +16,61 @@ const EVENT_TTL_SECONDS: u64 = 600;
 // first byte of every stored value, raised when the layout of a stored type changes.
 const FORMAT_VERSION: u8 = 3;
 
+// seconds a device or IP record must live, 7 days, or longer when a block on it lasts longer.
+fn entity_ttl(entity: &EntityState, now: i64) -> u64 {
+    // seconds left of the block, zero when there is none or it has ended.
+    let block_left = entity
+        .blocked_until
+        .map_or(0, |until| until.saturating_sub(now).max(0)) as u64;
+    // the longer of the two, so a block never outlives its record.
+    ENTITY_TTL_SECONDS.max(block_left)
+}
+
+// the current time in unix seconds.
+fn unix_now() -> i64 {
+    // seconds since 1970, zero when the clock is before that.
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs() as i64)
+}
+
 // the Garnet version of the store, it speaks the Redis protocol.
 #[derive(Clone)]
 pub struct GarnetStore {
     // one connection that many requests share.
     connection: ConnectionManager,
+}
+
+// builds the atomic write of the user, device and IP records, shared by update and save.
+fn records_pipe(
+    keys: &Keys<'_>,
+    state: &UserState,
+    entities: &Entities,
+) -> Result<redis::Pipeline, StoreError> {
+    // the time used to size the expiry of blocked records.
+    let now = unix_now();
+    // a new pipeline.
+    let mut pipe = redis::pipe();
+    // atomic wraps the writes in MULTI and EXEC, so they all happen or none does.
+    pipe.atomic()
+        // the user record has no expiry.
+        .set(user_key(keys.user_id), encode(state)?)
+        .ignore()
+        // device and IP records expire after 7 days without a write, or when their block ends if that is later.
+        .set_ex(
+            device_key(keys.device_id),
+            encode(&entities.device)?,
+            entity_ttl(&entities.device, now),
+        )
+        .ignore()
+        .set_ex(
+            ip_key(keys.ip),
+            encode(&entities.ip)?,
+            entity_ttl(&entities.ip, now),
+        )
+        .ignore();
+    // hand it back so the caller can add more commands.
+    Ok(pipe)
 }
 
 impl GarnetStore {
@@ -122,6 +174,22 @@ impl Store for GarnetStore {
         ))
     }
 
+    async fn update(
+        &self,
+        keys: &Keys<'_>,
+        state: UserState,
+        entities: Entities,
+    ) -> Result<(), StoreError> {
+        // a clone of the connection is cheap, all clones share one link.
+        let mut connection = self.connection.clone();
+        // the three writes, all or nothing.
+        records_pipe(keys, &state, &entities)?
+            .query_async::<()>(&mut connection)
+            .await?;
+        // done.
+        Ok(())
+    }
+
     async fn save(
         &self,
         keys: &Keys<'_>,
@@ -131,21 +199,8 @@ impl Store for GarnetStore {
     ) -> Result<(), StoreError> {
         // a clone of the connection is cheap, all clones share one link.
         let mut connection = self.connection.clone();
-        // atomic wraps the four writes in MULTI and EXEC, so they all happen or none does, in one round trip.
-        redis::pipe()
-            .atomic()
-            // the user record has no expiry.
-            .set(user_key(keys.user_id), encode(&state)?)
-            .ignore()
-            // device and IP records expire after 7 days without a write.
-            .set_ex(
-                device_key(keys.device_id),
-                encode(&entities.device)?,
-                ENTITY_TTL_SECONDS,
-            )
-            .ignore()
-            .set_ex(ip_key(keys.ip), encode(&entities.ip)?, ENTITY_TTL_SECONDS)
-            .ignore()
+        // the three records plus the decision, all or nothing, in one round trip.
+        records_pipe(keys, &state, &entities)?
             // the decision is remembered for a short time, so a retry gets the same answer.
             .set_ex(
                 event_key(keys.event_id),
@@ -206,6 +261,28 @@ mod tests {
         ));
     }
 
+    // a record lives 7 days, or until its block ends when that is later.
+    #[test]
+    fn entity_records_live_at_least_as_long_as_their_block() {
+        // no block gives the 7 days.
+        assert_eq!(
+            entity_ttl(&EntityState::default(), 1_000),
+            ENTITY_TTL_SECONDS
+        );
+        // a block that ended gives the 7 days.
+        let mut ended = EntityState::default();
+        // set the end time.
+        ended.blocked_until = Some(500);
+        // check.
+        assert_eq!(entity_ttl(&ended, 1_000), ENTITY_TTL_SECONDS);
+        // a block of 30 days gives 30 days.
+        let mut long = EntityState::default();
+        // set the end time.
+        long.blocked_until = Some(1_000 + 2_592_000);
+        // check.
+        assert_eq!(entity_ttl(&long, 1_000), 2_592_000);
+    }
+
     // against a real server, run with: cargo test -p store -- --ignored, with GARNET_URL set.
     #[tokio::test]
     #[ignore = "needs a running Garnet or Redis server and the GARNET_URL variable"]
@@ -259,14 +336,16 @@ mod tests {
             .unwrap();
         // check.
         assert_eq!(user_ttl, -1);
-        // the device key expires within 7 days.
+        // the device key outlives the standard 7 day expiry because it is blocked longer.
         let device_ttl: i64 = redis::cmd("TTL")
             .arg(device_key(&id))
             .query_async(&mut connection)
             .await
             .unwrap();
-        // check, it is set and not above the limit.
-        assert!((1..=ENTITY_TTL_SECONDS as i64).contains(&device_ttl));
+        // check, it is set, longer than 7 days and not above the time to the end of the block.
+        assert!(device_ttl > ENTITY_TTL_SECONDS as i64);
+        // the upper bound.
+        assert!(device_ttl <= entity_ttl(&entities.device, unix_now()) as i64);
         // the IP key expires within 7 days.
         let ip_ttl: i64 = redis::cmd("TTL")
             .arg(ip_key(&id))

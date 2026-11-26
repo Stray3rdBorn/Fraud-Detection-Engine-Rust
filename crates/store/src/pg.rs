@@ -5,6 +5,7 @@ use engine::{Decision, TransactionEvent};
 // the connection pool and its settings.
 use sqlx::{PgPool, postgres::PgPoolOptions};
 // type for the time limit on connecting.
+use serde::Serialize;
 use std::time::Duration;
 
 // the tables, created when they do not exist yet.
@@ -20,6 +21,60 @@ pub struct DecisionRecord {
     pub event: TransactionEvent,
     // what the engine answered.
     pub decision: Decision,
+}
+
+// the columns of one open case row, in the order of the query.
+type CaseColumns = (
+    i64,
+    String,
+    String,
+    String,
+    String,
+    f64,
+    Option<String>,
+    i64,
+    String,
+    i32,
+    String,
+);
+
+// one open case as an analyst sees it, the transaction and the decision together.
+#[derive(Debug, Serialize)]
+pub struct CaseRow {
+    // the number analysts use to refer to the case.
+    pub case_id: i64,
+    // the transaction the case is about.
+    pub event_id: String,
+    // the account that made it.
+    pub user_id: String,
+    // the device it came from.
+    pub device_id: String,
+    // the IP address it came from.
+    pub ip: String,
+    // the amount.
+    pub amount: f64,
+    // the city, when one was sent.
+    pub city: Option<String>,
+    // the time of the transaction.
+    pub event_time: i64,
+    // review or block.
+    pub outcome: String,
+    // the risk score.
+    pub score: i32,
+    // one line for every rule that fired.
+    pub reasons: Vec<String>,
+}
+
+// the ids a verdict acts on, taken from the decision behind a case.
+pub struct CaseTarget {
+    // the transaction, needed as the key of the Garnet write.
+    pub event_id: String,
+    // the account to block or clear.
+    pub user_id: String,
+    // the device to block.
+    pub device_id: String,
+    // the IP address to block.
+    pub ip: String,
 }
 
 // the Postgres version, it keeps decisions and cases for analysts and audits.
@@ -100,5 +155,105 @@ impl Postgres {
         .await?;
         // done.
         Ok(())
+    }
+
+    // lists open cases oldest first, only those after the given case number, so an analyst can page through them.
+    pub async fn open_cases(&self, after: i64, limit: i64) -> Result<Vec<CaseRow>, StoreError> {
+        // one row per open case with its decision, the reasons come back as text and are parsed below.
+        let rows: Vec<CaseColumns> = sqlx::query_as(
+            "SELECT c.case_id, d.event_id, d.user_id, d.device_id, d.ip, d.amount, d.city,
+                    d.event_time, d.outcome, d.score, d.reasons::text
+             FROM cases c JOIN decisions d USING (event_id)
+             WHERE c.status = 'open' AND c.case_id > $1
+             ORDER BY c.case_id
+             LIMIT $2",
+        )
+        .bind(after)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+        // turn each row into a case.
+        rows.into_iter()
+            .map(
+                |(
+                    case_id,
+                    event_id,
+                    user_id,
+                    device_id,
+                    ip,
+                    amount,
+                    city,
+                    event_time,
+                    outcome,
+                    score,
+                    reasons,
+                )| {
+                    // the reasons were written by this program, so a parse failure means a damaged row.
+                    let reasons = serde_json::from_str(&reasons)
+                        .map_err(|error| sqlx::Error::Decode(Box::new(error)))?;
+                    // the finished case.
+                    Ok(CaseRow {
+                        case_id,
+                        event_id,
+                        user_id,
+                        device_id,
+                        ip,
+                        amount,
+                        city,
+                        event_time,
+                        outcome,
+                        score,
+                        reasons,
+                    })
+                },
+            )
+            .collect::<Result<Vec<_>, sqlx::Error>>()
+            .map_err(StoreError::from)
+    }
+
+    // finds the ids behind an open case, nothing comes back for a missing or closed case.
+    pub async fn case_target(&self, case_id: i64) -> Result<Option<CaseTarget>, StoreError> {
+        // one row at most.
+        let row: Option<(String, String, String, String)> = sqlx::query_as(
+            "SELECT d.event_id, d.user_id, d.device_id, d.ip
+             FROM cases c JOIN decisions d USING (event_id)
+             WHERE c.case_id = $1 AND c.status = 'open'",
+        )
+        .bind(case_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        // name the columns.
+        Ok(row.map(|(event_id, user_id, device_id, ip)| CaseTarget {
+            event_id,
+            user_id,
+            device_id,
+            ip,
+        }))
+    }
+
+    // closes an open case and stores the verdict in one statement, false means the case was missing or already closed.
+    pub async fn close_case(
+        &self,
+        case_id: i64,
+        verdict: &str,
+        note: Option<&str>,
+    ) -> Result<bool, StoreError> {
+        // the update and the insert share one statement, so a case is never closed without its verdict.
+        let done = sqlx::query(
+            "WITH closed AS (
+                 UPDATE cases SET status = 'closed'
+                 WHERE case_id = $1 AND status = 'open'
+                 RETURNING case_id
+             )
+             INSERT INTO verdicts (case_id, verdict, note)
+             SELECT case_id, $2, $3 FROM closed",
+        )
+        .bind(case_id)
+        .bind(verdict)
+        .bind(note)
+        .execute(&self.pool)
+        .await?;
+        // one inserted row means this call closed the case.
+        Ok(done.rows_affected() == 1)
     }
 }

@@ -74,6 +74,27 @@ impl Store for InMemoryStore {
         ))
     }
 
+    async fn update(
+        &self,
+        keys: &Keys<'_>,
+        state: UserState,
+        entities: Entities,
+    ) -> Result<(), StoreError> {
+        // save the user.
+        self.users
+            .lock()
+            .unwrap()
+            .insert(user_key(keys.user_id), state);
+        // lock the entity map once and save the device and the IP.
+        let mut map = self.entities.lock().unwrap();
+        // the device record.
+        map.insert(device_key(keys.device_id), entities.device);
+        // the IP record.
+        map.insert(ip_key(keys.ip), entities.ip);
+        // nothing can fail in memory.
+        Ok(())
+    }
+
     async fn save(
         &self,
         keys: &Keys<'_>,
@@ -81,22 +102,13 @@ impl Store for InMemoryStore {
         entities: Entities,
         decision: &Decision,
     ) -> Result<(), StoreError> {
-        // save the user.
-        self.users
-            .lock()
-            .unwrap()
-            .insert(user_key(keys.user_id), state);
+        // the three records.
+        self.update(keys, state, entities).await?;
         // save the decision, so a repeated event id gets the same answer.
         self.decisions
             .lock()
             .unwrap()
             .insert(event_key(keys.event_id), decision.clone());
-        // lock the entity map once and save the device and the IP.
-        let mut map = self.entities.lock().unwrap();
-        // the device record.
-        map.insert(device_key(keys.device_id), entities.device);
-        // the IP record.
-        map.insert(ip_key(keys.ip), entities.ip);
         // nothing can fail in memory.
         Ok(())
     }

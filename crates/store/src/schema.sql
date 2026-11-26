@@ -26,3 +26,13 @@ CREATE TABLE IF NOT EXISTS cases (
 
 -- lists open cases quickly, closed cases are left out of the index.
 CREATE INDEX IF NOT EXISTS cases_open_idx ON cases (case_id) WHERE status = 'open';
+
+
+-- the analyst's answer for a case, one verdict per case.
+CREATE TABLE IF NOT EXISTS verdicts (
+    verdict_id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    case_id    bigint NOT NULL UNIQUE REFERENCES cases (case_id),
+    verdict    text NOT NULL CHECK (verdict IN ('fraud', 'false_alarm')),
+    note       text,
+    decided_at timestamptz NOT NULL DEFAULT now()
+);
