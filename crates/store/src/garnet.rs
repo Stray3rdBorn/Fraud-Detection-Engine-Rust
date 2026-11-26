@@ -12,7 +12,7 @@ const ENTITY_TTL_SECONDS: u64 = 604_800;
 // seconds a decision is remembered for repeated event ids, 10 minutes, long enough for a payment system to retry.
 const EVENT_TTL_SECONDS: u64 = 600;
 // first byte of every stored value, raised when the layout of a stored type changes.
-const FORMAT_VERSION: u8 = 2;
+const FORMAT_VERSION: u8 = 3;
 
 // the Garnet version of the store, it speaks the Redis protocol.
 #[derive(Clone)]
