@@ -8,7 +8,7 @@ const MIN_KEY_LEN: usize = 16;
 // allowed difference between a transaction time and the server clock, in seconds.
 const DEFAULT_CLOCK_SKEW: i64 = 300;
 // where the server listens when nothing else is set, localhost only.
-const DEFAULT_BIND: &str = "127.0.0.1:3000";
+const DEFAULT_BIND: &str = "127.0.0.1:3001";
 // longest time one request may take.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
 // most requests that may run at the same time.
@@ -107,7 +107,7 @@ impl Settings {
         let bind = get("BIND_ADDR")
             .unwrap_or_else(|| DEFAULT_BIND.to_string())
             .parse()
-            .map_err(|_| "BIND_ADDR must look like 127.0.0.1:3000".to_string())?;
+            .map_err(|_| "BIND_ADDR must look like 127.0.0.1:3001".to_string())?;
         // the clock check is on by default, off lets old data be replayed.
         let max_clock_skew = match get("CLOCK_SKEW_SECONDS").as_deref() {
             // not set means the default.
@@ -236,7 +236,7 @@ mod tests {
         // only a good key is set, so the defaults apply.
         let settings = Settings::from_lookup(lookup(&[("API_KEY", "0123456789abcdef")])).unwrap();
         // the default address is localhost.
-        assert_eq!(settings.bind.to_string(), "127.0.0.1:3000");
+        assert_eq!(settings.bind.to_string(), "127.0.0.1:3001");
         // the clock check is on.
         assert_eq!(settings.max_clock_skew, Some(300));
         // no Garnet address means no value.
