@@ -83,5 +83,8 @@ async fn write(db: &Postgres, batch: &[DecisionRecord]) {
         }
     }
     // the batch is dropped so the queue keeps moving.
-    eprintln!("decision log gave up, {} decisions were not stored", batch.len());
+    eprintln!(
+        "decision log gave up, {} decisions were not stored",
+        batch.len()
+    );
 }

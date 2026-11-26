@@ -39,7 +39,6 @@ fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>, StoreError> {
     Ok(postcard::to_extend(value, vec![FORMAT_VERSION])?)
 }
 
-
 // turns stored bytes back into a record, a wrong version or damaged bytes are errors.
 fn decode_bytes<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, StoreError> {
     // split the version byte from the rest.
@@ -216,37 +215,37 @@ mod tests {
         // connect.
         let store = GarnetStore::connect(&url).await.unwrap();
         let id = format!("garnet-test-{}", std::process::id());
-               // all four ids are the same text, the key prefixes keep them apart.
+        // all four ids are the same text, the key prefixes keep them apart.
         let keys = Keys {
             user_id: &id,
             device_id: &id,
             ip: &id,
             event_id: &id,
         };
-               // a new user, device, IP and event load empty.
+        // a new user, device, IP and event load empty.
         let (empty_state, empty_entities, empty_decision) = store.load(&keys).await.unwrap();
         // the state is empty.
         assert_eq!(empty_state, UserState::default());
         // the entities are empty.
         assert_eq!(empty_entities, Entities::default());
-                // no decision exists yet.
+        // no decision exists yet.
         assert!(empty_decision.is_none());
         // save records that carry data in every field.
         let (state, entities) = busy_records();
-                // the decision that goes with them.
+        // the decision that goes with them.
         let decision = busy_decision();
         // write them.
         store
-                        .save(&keys, state.clone(), entities.clone(), &decision)
+            .save(&keys, state.clone(), entities.clone(), &decision)
             .await
             .unwrap();
         // read them back.
-               let (loaded_state, loaded_entities, loaded_decision) = store.load(&keys).await.unwrap();
+        let (loaded_state, loaded_entities, loaded_decision) = store.load(&keys).await.unwrap();
         // the state is the same.
         assert_eq!(loaded_state, state);
         // the entities are the same.
         assert_eq!(loaded_entities, entities);
-                // the decision is the same.
+        // the decision is the same.
         assert_eq!(loaded_decision, Some(decision));
         // the user alone can be read too.
         assert_eq!(store.get_user(&id).await.unwrap(), state);
@@ -276,10 +275,10 @@ mod tests {
             .unwrap();
         // check.
         assert!((1..=ENTITY_TTL_SECONDS as i64).contains(&ip_ttl));
-                // the decision key expires within 10 minutes.
+        // the decision key expires within 10 minutes.
         let event_ttl: i64 = redis::cmd("TTL")
             .arg(event_key(&id))
-                        .arg(event_key(&id))
+            .arg(event_key(&id))
             .query_async(&mut connection)
             .await
             .unwrap();

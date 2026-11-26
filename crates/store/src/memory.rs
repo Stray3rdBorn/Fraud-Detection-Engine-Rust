@@ -55,7 +55,7 @@ impl Store for InMemoryStore {
         Ok(())
     }
 
-        async fn load(
+    async fn load(
         &self,
         keys: &Keys<'_>,
     ) -> Result<(UserState, Entities, Option<Decision>), StoreError> {
@@ -102,12 +102,11 @@ impl Store for InMemoryStore {
     }
 }
 
-
 // tests for the in memory store.
 #[cfg(test)]
 mod tests {
     // bring the store and the shared test records into the tests.
-       // bring the store and the shared test records into the tests.
+    // bring the store and the shared test records into the tests.
     use super::*;
     use crate::testing::{busy_decision, busy_records};
 

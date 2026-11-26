@@ -199,7 +199,7 @@ mod tests {
             ]))
             .is_err()
         );
-                // no Postgres address means no value.
+        // no Postgres address means no value.
         assert!(settings.database_url.is_none());
     }
 }

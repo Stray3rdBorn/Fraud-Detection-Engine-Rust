@@ -6,7 +6,6 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-
 // web framework pieces: JSON body and response, router, shared state, body size limit, middleware, status codes and the two HTTP methods used.
 use axum::{
     Json, Router,
@@ -29,7 +28,6 @@ use store::{DecisionRecord, GarnetStore, InMemoryStore, Keys, Postgres, Store};
 use tokio::sync::Semaphore;
 // the queue that feeds the decision log.
 use recorder::Recorder;
-
 
 // the API key check and the limit on running requests.
 mod auth;
@@ -57,7 +55,7 @@ struct AppState<S> {
     locks: KeyLocks,
     // the places for running requests, one is taken per request.
     permits: Semaphore,
-        // the decision log, empty when no Postgres address is set.
+    // the decision log, empty when no Postgres address is set.
     recorder: Option<Recorder>,
     // the startup settings, including the API key.
     settings: Settings,
@@ -93,7 +91,7 @@ async fn decide<S: Store>(
     app: &AppState<S>,
     event: &TransactionEvent,
 ) -> Result<Decision, ApiError> {
-       // requests that share a user, device, IP or event id wait for each other until the records are saved.
+    // requests that share a user, device, IP or event id wait for each other until the records are saved.
     let _guards = app
         .locks
         .lock(&[&event.user_id, &event.device_id, &event.ip, &event.event_id])
@@ -115,7 +113,9 @@ async fn decide<S: Store>(
     // run the engine, it returns the decision and the updated records.
     let (decision, next, next_entities) = app.engine.evaluate(event, &state, &entities);
     // save the updated records and the decision, all or nothing.
-    app.store.save(&keys, next, next_entities, &decision).await?;
+    app.store
+        .save(&keys, next, next_entities, &decision)
+        .await?;
     // queue the decision for the log, only after it is saved, so a failed request leaves no entry.
     if let Some(recorder) = &app.recorder {
         // the transaction and its decision are written together.
@@ -173,7 +173,12 @@ async fn account_event_handler<S: Store>(
 }
 
 // builds the router for any store version.
-fn router<S: Store>(store: S, settings: Settings, config: Config, recorder: Option<Recorder>) -> Router {
+fn router<S: Store>(
+    store: S,
+    settings: Settings,
+    config: Config,
+    recorder: Option<Recorder>,
+) -> Router {
     // the places for running requests, counted before the settings move into the state.
     let permits = Semaphore::new(settings.max_in_flight);
     // the state is created once and shared through an Arc.
@@ -227,16 +232,18 @@ async fn main() {
         // the built in defaults.
         None => println!("rule settings: defaults"),
     }
-        // the decision log, connect once at startup, a wrong address or password stops the server right away.
+    // the decision log, connect once at startup, a wrong address or password stops the server right away.
     let recorder = match &settings.database_url {
         // the address can hold a password and is never printed.
         Some(url) => {
             // tell the operator.
             println!("decision log: Postgres");
             // connect, create the tables and start the writing task.
-            Some(Recorder::start(Postgres::connect(url).await.unwrap_or_else(
-                |error| fail(&format!("could not connect to Postgres: {error}")),
-            )))
+            Some(Recorder::start(
+                Postgres::connect(url).await.unwrap_or_else(|error| {
+                    fail(&format!("could not connect to Postgres: {error}"))
+                }),
+            ))
         }
         // no address means no log.
         None => {
