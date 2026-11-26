@@ -175,6 +175,8 @@ Every endpoint except `GET /health` needs the header `x-api-key`. Input is valid
 | `POST /v1/cases/{id}/verdict` | Mark a case as fraud or a false alarm      |
 | `GET /health`                 | Liveness check                             |
 
+A fraud verdict blocks the account, device and IP for 30 days. A false alarm verdict lowers the account's score by 30 points for 7 days and never overrides a block. Both durations and the 30 points are settings. Until the analyst login exists, the case routes use the same API key as the other routes.
+
 Working event fields, finalized during the build: a `TransactionEvent` carries an event id, user id, timestamp, amount, device id, IP address, city or country, channel and an optional signup time. An `AccountEvent` carries a user id, timestamp and a kind.
 
 ## 10. Test data
