@@ -1,7 +1,7 @@
 // the rule settings type.
 use engine::Config;
 // types for the address and the time limit.
-use std::{net::SocketAddr, time::Duration};
+use std::{collections::HashMap, net::SocketAddr, sync::OnceLock, time::Duration};
 
 // shortest API key accepted, a short key is easy to guess.
 const MIN_KEY_LEN: usize = 16;
@@ -22,7 +22,7 @@ pub struct Settings {
     pub bind: SocketAddr,
     // the Garnet address, empty means the in memory store is used.
     pub garnet_url: Option<String>,
-    // the postgresql address
+    // the Postgres address, empty means decisions and cases are not stored.
     pub database_url: Option<String>,
     // the path of the rule settings file, empty means the defaults are used.
     pub engine_config: Option<String>,
@@ -34,11 +34,60 @@ pub struct Settings {
     pub max_in_flight: usize,
 }
 
+// the variables of the .env file, read once.
+static FILE_VARS: OnceLock<HashMap<String, String>> = OnceLock::new();
+
+// turns the text of a .env file into names and values, lines look like NAME=value.
+fn parse_env(text: &str) -> HashMap<String, String> {
+    // a byte order mark at the start of the file is dropped, some Windows editors add one.
+    text.trim_start_matches('\u{feff}')
+        .lines()
+        .filter_map(|line| {
+            // spaces around the line do not matter.
+            let line = line.trim();
+            // empty lines and comments are skipped.
+            if line.is_empty() || line.starts_with('#') {
+                return None;
+            }
+            // split at the first equals sign, a line without one is skipped.
+            let (name, value) = line.split_once('=')?;
+            // spaces around the value do not matter.
+            let value = value.trim();
+            // one pair of matching quotes around the value is removed.
+            let value = value
+                .strip_prefix('"')
+                .and_then(|v| v.strip_suffix('"'))
+                .or_else(|| value.strip_prefix('\'').and_then(|v| v.strip_suffix('\'')))
+                .unwrap_or(value);
+            // keep the pair.
+            Some((name.trim().to_string(), value.to_string()))
+        })
+        .collect()
+}
+
+// finds a setting, a real environment variable wins over the .env file in the folder the server starts from.
+pub fn env_var(name: &str) -> Option<String> {
+    // the real environment first.
+    std::env::var(name).ok().or_else(|| {
+        // the file is read on the first use, a missing file counts as empty.
+        FILE_VARS
+            .get_or_init(|| {
+                // read and parse.
+                std::fs::read_to_string(".env")
+                    .map(|text| parse_env(&text))
+                    .unwrap_or_default()
+            })
+            // the value of this name, if the file has it.
+            .get(name)
+            .cloned()
+    })
+}
+
 impl Settings {
-    // reads the settings from the environment variables of the process.
+    // reads the settings from the environment variables and the .env file.
     pub fn from_env() -> Result<Self, String> {
-        // look each name up in the real environment.
-        Self::from_lookup(|name| std::env::var(name).ok())
+        // look each name up in the environment first and the file second.
+        Self::from_lookup(env_var)
     }
 
     // reads the settings through any lookup function, so tests do not touch the real environment.
@@ -130,6 +179,23 @@ mod tests {
         }
     }
 
+    // a .env file is read as names and values, comments and quotes are handled.
+    #[test]
+    fn env_file_lines_are_parsed() {
+        // a file with every kind of line.
+        let vars = parse_env(
+            "\u{feff}# comment\n\nAPI_KEY = abc123\r\nGARNET_URL=\"redis://x\"\nBROKEN\nA='b=c'\n",
+        );
+        // plain value with spaces around the equals sign.
+        assert_eq!(vars["API_KEY"], "abc123");
+        // double quotes are removed.
+        assert_eq!(vars["GARNET_URL"], "redis://x");
+        // single quotes are removed and later equals signs stay.
+        assert_eq!(vars["A"], "b=c");
+        // the comment and the broken line give nothing.
+        assert_eq!(vars.len(), 3);
+    }
+
     // the example file in the config folder must always match the defaults.
     #[test]
     fn example_file_matches_the_defaults() {
@@ -175,6 +241,8 @@ mod tests {
         assert_eq!(settings.max_clock_skew, Some(300));
         // no Garnet address means no value.
         assert!(settings.garnet_url.is_none());
+        // no Postgres address means no value.
+        assert!(settings.database_url.is_none());
         // the clock check can be turned off.
         let off = Settings::from_lookup(lookup(&[
             ("API_KEY", "0123456789abcdef"),
@@ -199,7 +267,5 @@ mod tests {
             ]))
             .is_err()
         );
-        // no Postgres address means no value.
-        assert!(settings.database_url.is_none());
     }
 }
