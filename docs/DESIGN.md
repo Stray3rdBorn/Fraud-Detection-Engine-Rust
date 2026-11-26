@@ -154,11 +154,12 @@ The `engine` crate never touches the network or the disk, so every rule can be t
 
 Each piece of data has one owner, so two copies never go out of sync.
 
-| Where       | What                                                                                                                                                                                             |
-| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Garnet      | Per user state (counters, running statistics, known devices, last city, login failures, password change time, first seen time), device and IP links with a 7 day expiry, blocklist and allowlist |
-| Postgres    | Every decision with its reasons, cases, analyst verdicts                                                                                                                                         |
-| Rust memory | Rules, config, the city table, the model                                                                                                                                                         |
+| Where             | What |
+| ----------------- | ---- |
+| Garnet            | Per user state (counters, running statistics, known devices, last city, login failures, password change time, first seen time), device and IP links with a 7 day expiry, blocklist and allowlist |
+| Garnet, event key | The decision made for each event id, kept for 10 minutes, so a retried request gets the same answer and is not counted twice |
+| Postgres          | Every decision with its reasons, cases, analyst verdicts. A case is opened for every review or block decision. |
+| Rust memory       | Rules, config, the city table, the model |
 
 Garnet holds a user's whole state together, so a decision costs two network calls: one read and one write.
 
